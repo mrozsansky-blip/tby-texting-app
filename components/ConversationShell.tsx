@@ -22,6 +22,24 @@ const messages = [
   { from: 'parent', body: 'Can you please send the form link again?', time: '2:14 PM' }
 ];
 
+const styles = {
+  shell: { display: 'grid', gridTemplateColumns: '310px 1fr 340px', height: 'calc(100vh - 32px)', overflow: 'hidden', borderRadius: 28, background: '#ffffff', boxShadow: '0 18px 60px rgba(15, 23, 42, 0.10)', border: '1px solid #e5e7eb' } as React.CSSProperties,
+  sidebar: { borderRight: '1px solid #eef2f7', background: '#fbfdff' } as React.CSSProperties,
+  rightbar: { borderLeft: '1px solid #eef2f7', padding: 18, background: '#ffffff' } as React.CSSProperties,
+  header: { padding: 18, borderBottom: '1px solid #eef2f7' } as React.CSSProperties,
+  input: { width: '100%', marginTop: 12, borderRadius: 14, border: '1px solid #dbe3ee', padding: '11px 12px', fontSize: 14, outline: 'none' } as React.CSSProperties,
+  conversationButton: (active: boolean): React.CSSProperties => ({ width: '100%', border: 0, borderBottom: '1px solid #eef2f7', padding: 16, textAlign: 'left', background: active ? '#eef6ff' : '#fbfdff', cursor: 'pointer' }),
+  row: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 } as React.CSSProperties,
+  tag: { borderRadius: 999, background: '#e8eef7', padding: '4px 9px', fontSize: 12, color: '#334155' } as React.CSSProperties,
+  thread: { display: 'flex', minHeight: 0, flexDirection: 'column' } as React.CSSProperties,
+  messages: { flex: 1, overflowY: 'auto', padding: 24, background: 'linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%)' } as React.CSSProperties,
+  bubble: (office: boolean): React.CSSProperties => ({ maxWidth: '76%', marginLeft: office ? 'auto' : 0, marginBottom: 16, borderRadius: office ? '22px 22px 6px 22px' : '22px 22px 22px 6px', padding: 16, background: office ? '#0f172a' : '#ffffff', color: office ? '#ffffff' : '#111827', boxShadow: '0 8px 22px rgba(15, 23, 42, 0.08)' }),
+  compose: { borderTop: '1px solid #eef2f7', padding: 16, background: '#ffffff' } as React.CSSProperties,
+  textarea: { width: '100%', borderRadius: 18, border: '1px solid #dbe3ee', padding: 14, fontSize: 14, resize: 'vertical', outline: 'none', fontFamily: 'inherit' } as React.CSSProperties,
+  primaryButton: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 14, border: 0, background: '#0f172a', color: '#ffffff', padding: '11px 16px', fontWeight: 700, cursor: 'pointer' } as React.CSSProperties,
+  card: { border: '1px solid #e5e7eb', borderRadius: 22, padding: 16, background: '#ffffff', boxShadow: '0 10px 28px rgba(15, 23, 42, 0.05)' } as React.CSSProperties
+};
+
 export function ConversationShell() {
   const [selectedId, setSelectedId] = useState('levy');
   const [prompt, setPrompt] = useState('Tell bus 4 parents that the bus is delayed 15 minutes today');
@@ -41,66 +59,73 @@ export function ConversationShell() {
   }
 
   return (
-    <div className="grid h-[calc(100vh-2rem)] grid-cols-1 overflow-hidden rounded-3xl bg-white shadow-sm md:grid-cols-[310px_1fr_340px]">
-      <aside className="border-r border-gray-100">
-        <div className="border-b border-gray-100 p-4">
-          <h1 className="text-xl font-bold">Inbox</h1>
-          <input className="mt-3 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" placeholder="Search family, class, bus..." />
+    <div style={styles.shell}>
+      <aside style={styles.sidebar}>
+        <div style={styles.header}>
+          <h1 style={{ margin: 0, fontSize: 22 }}>Inbox</h1>
+          <input style={styles.input} placeholder="Search family, class, bus..." />
         </div>
         {conversations.map((conversation) => (
-          <button key={conversation.id} onClick={() => setSelectedId(conversation.id)} className={`w-full border-b border-gray-100 p-4 text-left ${selectedId === conversation.id ? 'bg-gray-50' : 'bg-white'}`}>
-            <div className="flex items-center justify-between">
-              <p className="font-semibold">{conversation.familyName}</p>
-              <span className="text-xs text-gray-500">{conversation.time}</span>
+          <button key={conversation.id} onClick={() => setSelectedId(conversation.id)} style={styles.conversationButton(selectedId === conversation.id)}>
+            <div style={styles.row}>
+              <p style={{ margin: 0, fontWeight: 800 }}>{conversation.familyName}</p>
+              <span style={{ fontSize: 12, color: '#64748b' }}>{conversation.time}</span>
             </div>
-            <p className="mt-1 truncate text-sm text-gray-600">{conversation.snippet}</p>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {conversation.groupLabels.map((label) => <span key={label} className="rounded-full bg-gray-100 px-2 py-1 text-xs">{label}</span>)}
+            <p style={{ margin: '6px 0 0', color: '#475569', fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{conversation.snippet}</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+              {conversation.groupLabels.map((label) => <span key={label} style={styles.tag}>{label}</span>)}
             </div>
           </button>
         ))}
       </aside>
 
-      <section className="flex min-h-0 flex-col">
-        <header className="border-b border-gray-100 p-4">
-          <h2 className="text-lg font-bold">{selected.familyName}</h2>
-          <p className="text-sm text-gray-500">Conversation history and staff replies</p>
+      <section style={styles.thread}>
+        <header style={styles.header}>
+          <h2 style={{ margin: 0, fontSize: 20 }}>{selected.familyName}</h2>
+          <p style={{ margin: '5px 0 0', color: '#64748b', fontSize: 14 }}>Conversation history and staff replies</p>
         </header>
-        <div className="flex-1 space-y-4 overflow-y-auto bg-gray-50 p-6">
-          {messages.map((message, index) => (
-            <div key={index} className={`max-w-[75%] rounded-2xl p-4 shadow-sm ${message.from === 'office' ? 'ml-auto bg-gray-900 text-white' : 'bg-white'}`}>
-              <p>{message.body}</p>
-              <p className={`mt-2 text-xs ${message.from === 'office' ? 'text-gray-300' : 'text-gray-500'}`}>{message.time}</p>
-            </div>
-          ))}
+        <div style={styles.messages}>
+          {messages.map((message, index) => {
+            const office = message.from === 'office';
+            return (
+              <div key={index} style={styles.bubble(office)}>
+                <p style={{ margin: 0, lineHeight: 1.45 }}>{message.body}</p>
+                <p style={{ margin: '8px 0 0', fontSize: 12, color: office ? '#cbd5e1' : '#64748b' }}>{message.time}</p>
+              </div>
+            );
+          })}
         </div>
-        <div className="border-t border-gray-100 p-4">
-          <textarea className="h-24 w-full rounded-2xl border border-gray-200 p-3" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type a message or use AI on the right..." />
-          <div className="mt-3 flex items-center justify-between">
-            <p className="text-sm text-gray-500">Draft must be previewed before sending.</p>
-            <button className="inline-flex items-center gap-2 rounded-xl bg-gray-900 px-4 py-2 font-medium text-white"><Send className="h-4 w-4" /> Preview Send</button>
+        <div style={styles.compose}>
+          <textarea style={{ ...styles.textarea, height: 92 }} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type a message or use AI on the right..." />
+          <div style={{ ...styles.row, marginTop: 12 }}>
+            <p style={{ margin: 0, fontSize: 14, color: '#64748b' }}>Draft must be previewed before sending.</p>
+            <button style={styles.primaryButton}><Send size={16} /> Preview Send</button>
           </div>
         </div>
       </section>
 
-      <aside className="border-l border-gray-100 p-4">
-        <div className="rounded-2xl border border-gray-200 p-4">
-          <div className="flex items-center gap-2 font-semibold"><Bot className="h-5 w-5" /> AI compose and group finder</div>
-          <textarea className="mt-3 h-28 w-full rounded-xl border border-gray-200 p-3 text-sm" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-          <button onClick={askAi} className="mt-3 w-full rounded-xl bg-gray-900 px-4 py-2 font-medium text-white">Draft and find group</button>
-          {group && <div className="mt-4 rounded-xl bg-gray-50 p-3 text-sm"><p className="font-semibold">Suggested recipients</p><p>{group}</p></div>}
+      <aside style={styles.rightbar}>
+        <div style={styles.card}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 800 }}><Bot size={20} /> AI compose and group finder</div>
+          <textarea style={{ ...styles.textarea, height: 112, marginTop: 12 }} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+          <button onClick={askAi} style={{ ...styles.primaryButton, width: '100%', marginTop: 12 }}>Draft and find group</button>
+          {group && <div style={{ marginTop: 14, borderRadius: 16, background: '#f1f5f9', padding: 12, fontSize: 14 }}><p style={{ margin: 0, fontWeight: 800 }}>Suggested recipients</p><p style={{ margin: '5px 0 0' }}>{group}</p></div>}
         </div>
 
-        <div className="mt-4 rounded-2xl border border-gray-200 p-4">
-          <div className="flex items-center gap-2 font-semibold"><Users className="h-5 w-5" /> Family context</div>
-          <dl className="mt-3 space-y-2 text-sm">
-            <div><dt className="text-gray-500">Parents</dt><dd>Mrs. Levy, Mr. Levy</dd></div>
-            <div><dt className="text-gray-500">Students</dt><dd>Sara Levy - Grade 8<br />Chani Levy - Grade 5</dd></div>
-            <div><dt className="text-gray-500">Groups</dt><dd>Grade 8, Grade 5, Bus 4</dd></div>
-            <div><dt className="text-gray-500">Forms</dt><dd>Trip form missing</dd></div>
-          </dl>
+        <div style={{ ...styles.card, marginTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 800 }}><Users size={20} /> Family context</div>
+          <div style={{ marginTop: 14, display: 'grid', gap: 12, fontSize: 14 }}>
+            <Info label="Parents" value="Mrs. Levy, Mr. Levy" />
+            <Info label="Students" value="Sara Levy - Grade 8; Chani Levy - Grade 5" />
+            <Info label="Groups" value="Grade 8, Grade 5, Bus 4" />
+            <Info label="Forms" value="Trip form missing" />
+          </div>
         </div>
       </aside>
     </div>
   );
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return <div><div style={{ color: '#64748b', fontSize: 12, fontWeight: 700 }}>{label}</div><div style={{ marginTop: 3 }}>{value}</div></div>;
 }
