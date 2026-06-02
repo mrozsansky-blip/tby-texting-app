@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: tby-texting-app
+    env: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SCHOOL_NAME
+        value: Tiferes Bais Yaakov
+      - key: AIRTABLE_API_KEY
+        sync: false
+      - key: AIRTABLE_BASE_ID
+        sync: false
+      - key: TEXTGRID_API_KEY
+        sync: false
+      - key: TEXTGRID_SEND_URL
+        sync: false
+      - key: TEXTGRID_WEBHOOK_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: APP_LOGIN_SECRET
+        sync: false
