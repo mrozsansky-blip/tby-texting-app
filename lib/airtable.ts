@@ -292,19 +292,19 @@ function matchesChoice(phone: AirtableRecord, choice: RecipientPhoneChoice, pers
   if (choice === 'primary_family') return checkbox(phone, 'Primary for Family');
   if (choice === 'mother_cell') return phoneMatchesMother(phoneType, personInfo) && phoneLooksLikeCell(phoneType);
   if (choice === 'father_cell') return phoneMatchesFather(phoneType, personInfo) && phoneLooksLikeCell(phoneType);
-  if (choice === 'home') return phoneMatchesHome(phoneType);
+  if (choice === 'home') return false;
   if (choice === 'all_parent_cells') {
     return phoneLooksLikeCell(phoneType) && (phoneMatchesMother(phoneType, personInfo) || phoneMatchesFather(phoneType, personInfo));
   }
-  return true;
+  return phoneLooksLikeCell(phoneType) && !phoneMatchesHome(phoneType);
 }
 
 function noMatchReason(choice: RecipientPhoneChoice) {
   if (choice === 'mother_cell') return 'no_mother_cell_for_family';
   if (choice === 'father_cell') return 'no_father_cell_for_family';
-  if (choice === 'home') return 'no_home_phone_for_family';
+  if (choice === 'home') return 'home_phone_is_voice_only_not_sms';
   if (choice === 'all_parent_cells') return 'no_parent_cell_for_family';
-  if (choice === 'all_eligible_phones') return 'family_no_eligible_sms_phone';
+  if (choice === 'all_eligible_phones') return 'no_eligible_cell_phone_for_family';
   return 'no_primary_family_phone_for_family';
 }
 
