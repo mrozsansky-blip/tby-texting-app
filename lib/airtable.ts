@@ -67,11 +67,6 @@ function checkbox(record: AirtableRecord, fieldName: string) {
   return Boolean(record.get(fieldName));
 }
 
-function selectName(value: unknown) {
-  if (value && typeof value === 'object' && 'name' in value) return String((value as { name: unknown }).name || '');
-  return value ? String(value) : '';
-}
-
 function addSkip(skippedReasons: Record<string, number>, reason: string) {
   skippedReasons[reason] = (skippedReasons[reason] || 0) + 1;
 }
