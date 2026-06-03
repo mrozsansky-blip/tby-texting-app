@@ -1,5 +1,6 @@
 import Airtable from 'airtable';
 import { NextResponse } from 'next/server';
+import { getUsableEnvValue, isTextgridConfigured } from '@/lib/config';
 
 const TABLES = [
   'Families',
@@ -13,8 +14,8 @@ const TABLES = [
 ];
 
 function getBase() {
-  const apiKey = process.env.AIRTABLE_API_KEY;
-  const baseId = process.env.AIRTABLE_BASE_ID;
+  const apiKey = getUsableEnvValue('AIRTABLE_API_KEY');
+  const baseId = getUsableEnvValue('AIRTABLE_BASE_ID');
   if (!apiKey || !baseId) return null;
   return new Airtable({ apiKey }).base(baseId);
 }
@@ -22,7 +23,7 @@ function getBase() {
 async function checkTable(tableName: string) {
   const base = getBase();
   if (!base) {
-    return { tableName, readable: false, countInSample: 0, error: 'Airtable env vars are missing.' };
+    return { tableName, readable: false, countInSample: 0, sampleRecordIds: [], error: 'Airtable env vars are missing, masked, or invalid.' };
   }
 
   try {
@@ -46,12 +47,13 @@ async function checkTable(tableName: string) {
 }
 
 export async function GET() {
+  const textgridConfigured = isTextgridConfigured();
   const env = {
-    AIRTABLE_API_KEY: Boolean(process.env.AIRTABLE_API_KEY),
-    AIRTABLE_BASE_ID: Boolean(process.env.AIRTABLE_BASE_ID),
-    TEXTGRID_SEND_URL: Boolean(process.env.TEXTGRID_SEND_URL),
-    TEXTGRID_API_KEY: Boolean(process.env.TEXTGRID_API_KEY),
-    planningMode: !(process.env.TEXTGRID_SEND_URL && process.env.TEXTGRID_API_KEY)
+    AIRTABLE_API_KEY: Boolean(getUsableEnvValue('AIRTABLE_API_KEY')),
+    AIRTABLE_BASE_ID: Boolean(getUsableEnvValue('AIRTABLE_BASE_ID')),
+    TEXTGRID_SEND_URL: Boolean(getUsableEnvValue('TEXTGRID_SEND_URL')),
+    TEXTGRID_API_KEY: Boolean(getUsableEnvValue('TEXTGRID_API_KEY')),
+    planningMode: !textgridConfigured
   };
 
   const tables = await Promise.all(TABLES.map(checkTable));
@@ -65,10 +67,10 @@ export async function GET() {
     tables,
     checks: {
       groupsTableReturnsRecords: Boolean(groups && groups.readable && groups.countInSample > 0),
-      groupsNote: groups?.countInSample === 0 ? 'Communication Groups is readable but currently has no sample records. Add groups before testing the Groups page.' : undefined,
+      groupsNote: groups && groups.readable && groups.countInSample === 0 ? 'Communication Groups is readable but currently has no sample records. Add groups before testing the Groups page.' : undefined,
       messagesWritableRecommendedTable: 'Message Campaigns',
       messagesTableReadable: Boolean(campaigns?.readable),
-      textgridConnected: Boolean(process.env.TEXTGRID_SEND_URL && process.env.TEXTGRID_API_KEY)
+      textgridConnected: textgridConfigured
     }
   });
 }
