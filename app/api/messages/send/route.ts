@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { logOutboundMessage } from '@/lib/airtable';
+import { isTextgridConfigured } from '@/lib/config';
 import { sendSms } from '@/lib/textgrid';
 
-function isTextgridConfigured() {
-  return Boolean(process.env.TEXTGRID_SEND_URL && process.env.TEXTGRID_API_KEY);
+function smsSendingEnabled() {
+  return process.env.SMS_SEND_ENABLED === 'true' && isTextgridConfigured();
 }
 
 export async function POST(request: Request) {
@@ -19,19 +20,19 @@ export async function POST(request: Request) {
   }
 
   const uniqueRecipients = Array.from(new Set(recipients.map(String)));
-  const textgridConfigured = isTextgridConfigured();
+  const canSendSms = smsSendingEnabled();
   const logId = await logOutboundMessage({
     body: message,
     recipientGroup: recipientGroup || 'Manual selection',
     createdBy: confirmedBy || 'Unknown staff user',
-    status: textgridConfigured ? 'queued' : 'draft'
+    status: canSendSms ? 'queued' : 'draft'
   });
 
-  if (!textgridConfigured) {
+  if (!canSendSms) {
     return NextResponse.json({
       airtableMessageId: logId,
       planningMode: true,
-      warning: 'Textgrid is not configured yet, so no SMS was sent. The message was saved to Airtable as a draft/planning record.',
+      warning: 'SMS sending is disabled. The message was saved to Airtable as a draft/planning record and no SMS was sent.',
       requested: recipients.length,
       deduplicated: uniqueRecipients.length,
       results: uniqueRecipients.map((to) => ({ to, status: 'not_sent_planning_mode' }))
