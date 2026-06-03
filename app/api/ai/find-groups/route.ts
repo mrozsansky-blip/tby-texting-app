@@ -2,27 +2,41 @@ import { NextResponse } from 'next/server';
 import { suggestGroup } from '@/lib/ai';
 import { listGroups } from '@/lib/airtable';
 
-const fallbackGroups = ['Bus Route 4 Parents', 'Class 6B', 'Grade 4 Missing Trip Form', 'High School Parents', 'All Families'];
-
 export async function POST(request: Request) {
   const { prompt } = await request.json();
   if (!prompt || typeof prompt !== 'string') {
     return NextResponse.json({ error: 'Prompt is required.' }, { status: 400 });
   }
 
-  let groupNames = fallbackGroups;
+  let groupNames: string[] = [];
   try {
     const groups = await listGroups();
-    if (groups.length) groupNames = groups.map((group) => group.name);
-  } catch {}
+    groupNames = groups.map((group) => group.name).filter(Boolean);
+  } catch {
+    return NextResponse.json({
+      groupSuggestion: '',
+      reason: 'Airtable groups could not be loaded, so no recipient group was suggested.',
+      confidence: 'low',
+      needsHumanReview: true
+    });
+  }
+
+  if (groupNames.length === 0) {
+    return NextResponse.json({
+      groupSuggestion: '',
+      reason: 'No Airtable groups exist yet. Create groups before using the AI group finder.',
+      confidence: 'low',
+      needsHumanReview: true
+    });
+  }
 
   try {
     const result = await suggestGroup(prompt, groupNames);
     return NextResponse.json(result);
   } catch {
     return NextResponse.json({
-      groupSuggestion: groupNames[0],
-      reason: 'Fallback suggestion while AI is unavailable.',
+      groupSuggestion: '',
+      reason: 'AI was unavailable, so no group was suggested. Please choose a group manually.',
       confidence: 'low',
       needsHumanReview: true
     });
