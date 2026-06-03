@@ -58,7 +58,7 @@ type PhonePersonInfo = {
   title: string;
 };
 
-const DEFAULT_PHONE_CHOICES: RecipientPhoneChoice[] = ['primary_family'];
+const DEFAULT_PHONE_CHOICES: RecipientPhoneChoice[] = ['mother_cell', 'father_cell'];
 const VALID_PHONE_CHOICES = new Set<RecipientPhoneChoice>([
   'primary_family',
   'mother_cell',
@@ -406,9 +406,13 @@ export async function previewGroupRecipients(groupId: string, options: PreviewOp
 
     for (const choice of requestedPhoneChoices) {
       if (choice === 'primary_family') {
-        const selectedPhone = eligiblePhones.find((phone) => checkbox(phone, 'Primary for Family')) || eligiblePhones[0];
+        const selectedPhone = eligiblePhones.find((phone) => checkbox(phone, 'Primary for Family'));
+        if (!selectedPhone) {
+          addSkip(skippedReasons, 'no_primary_family_phone_for_family');
+          continue;
+        }
+
         addRecipient(familyId, selectedPhone, choice);
-        if (eligiblePhones.length > 1) addSkip(skippedReasons, 'deduped_extra_family_phones');
         continue;
       }
 
