@@ -20,6 +20,21 @@ function getBase() {
   return new Airtable({ apiKey }).base(baseId);
 }
 
+function describeError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const details = error as Record<string, unknown>;
+    return JSON.stringify({
+      error: details.error,
+      type: details.type,
+      statusCode: details.statusCode,
+      message: details.message
+    });
+  }
+  return 'Unknown Airtable error.';
+}
+
 async function checkTable(tableName: string) {
   const base = getBase();
   if (!base) {
@@ -41,7 +56,7 @@ async function checkTable(tableName: string) {
       readable: false,
       countInSample: 0,
       sampleRecordIds: [],
-      error: error instanceof Error ? error.message : 'Unknown Airtable error.'
+      error: describeError(error)
     };
   }
 }
