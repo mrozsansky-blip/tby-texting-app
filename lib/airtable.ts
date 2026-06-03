@@ -74,7 +74,7 @@ function base() {
   return new Airtable({ apiKey }).base(baseId);
 }
 
-function stringValue(value: unknown) {
+function stringValue(value: unknown): string {
   if (value === undefined || value === null || value === '') return '';
   if (Array.isArray(value)) return value.map(stringValue).filter(Boolean).join(', ');
   if (typeof value === 'object' && 'name' in value) return String((value as { name: unknown }).name || '');
