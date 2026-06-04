@@ -56,9 +56,14 @@ type PreviewOptions = {
 type PhonePersonInfo = {
   role: string;
   title: string;
+  name?: string;
 };
 
 const DEFAULT_PHONE_CHOICES: RecipientPhoneChoice[] = ['mother_cell', 'father_cell'];
+const FAMILY_TABLE = process.env.AIRTABLE_FAMILIES_TABLE || 'Families';
+const STUDENTS_TABLE = process.env.AIRTABLE_STUDENTS_TABLE || 'Students';
+const PEOPLE_TABLE = process.env.AIRTABLE_PEOPLE_TABLE || 'People';
+const PHONE_NUMBERS_TABLE = process.env.AIRTABLE_PHONE_NUMBERS_TABLE || 'Phone Numbers';
 const VALID_PHONE_CHOICES = new Set<RecipientPhoneChoice>([
   'primary_family',
   'mother_cell',
@@ -234,7 +239,7 @@ async function familyIdsForGroup(groupRecord: AirtableRecord) {
   for (const familyId of linkedFamilies) familyIds.add(familyId);
 
   if (linkedStudents.length > 0) {
-    const studentRecords = await findRecordsById('Students', linkedStudents);
+    const studentRecords = await findRecordsById(STUDENTS_TABLE, linkedStudents);
     const studentFamilyIds = await familyIdsFromStudentRecords(studentRecords);
     for (const familyId of studentFamilyIds) familyIds.add(familyId);
   }
@@ -248,7 +253,7 @@ async function familyIdsForGroup(groupRecord: AirtableRecord) {
   const normalizedName = normalizeGroupText(group.name);
 
   if (normalizedType === 'all' || normalizedName === 'all families') {
-    const familyRecords = await listAllRecords('Families', ['Family Display Name']);
+    const familyRecords = await listAllRecords(FAMILY_TABLE, ['Family Display Name']);
     for (const family of familyRecords) familyIds.add(family.id);
     notes.push('Group has no linked families, so the All Families starter rule selected every family.');
     return { group, familyIds, notes };
@@ -256,7 +261,7 @@ async function familyIdsForGroup(groupRecord: AirtableRecord) {
 
   const gradeToken = normalizedType === 'grade' ? gradeTokenFromGroupName(group.name) : '';
   if (gradeToken) {
-    const students = await listAllRecords('Students', ['FamilyKey', 'Grade']);
+    const students = await listAllRecords(STUDENTS_TABLE, ['FamilyKey', 'Grade']);
     const matchedStudents = students.filter((student) => studentGradeMatches(firstText(student, ['Grade']), gradeToken));
     const studentFamilyIds = await familyIdsFromStudentRecords(matchedStudents);
     for (const familyId of studentFamilyIds) familyIds.add(familyId);
@@ -269,13 +274,14 @@ async function familyIdsForGroup(groupRecord: AirtableRecord) {
 }
 
 async function peopleByPhoneNumberRecordId() {
-  const people = await listAllRecords('People', ['Role', 'Title', 'Phone Numbers']);
+  const people = await listAllRecords(PEOPLE_TABLE, ['Full Name', 'Role', 'Title', 'Phone Numbers']);
   const peopleByPhone = new Map<string, PhonePersonInfo>();
 
   for (const person of people) {
     const info = {
       role: firstText(person, ['Role']),
-      title: firstText(person, ['Title'])
+      title: firstText(person, ['Title']),
+      name: firstText(person, ['Full Name', 'Person Name', 'Name', 'Display Name', 'PersonKey'])
     };
 
     for (const phoneId of linkedRecordIds(person, 'Phone Numbers')) {
@@ -315,11 +321,11 @@ export async function previewGroupRecipients(groupId: string, options: PreviewOp
   const { group, familyIds, notes } = await familyIdsForGroup(groupRecord);
   const skippedReasons: Record<string, number> = {};
 
-  const familyRecords = familyIds.size > 0 ? await findRecordsById('Families', Array.from(familyIds)) : [];
+  const familyRecords = familyIds.size > 0 ? await findRecordsById(FAMILY_TABLE, Array.from(familyIds)) : [];
   const familyNamesById = new Map(familyRecords.map((family) => [family.id, firstText(family, ['Family Display Name', 'FamilyKey'], family.id)]));
   const personInfoByPhoneId = await peopleByPhoneNumberRecordId();
 
-  const phoneRecords = await listAllRecords('Phone Numbers', [
+  const phoneRecords = await listAllRecords(PHONE_NUMBERS_TABLE, [
     'FamilyKey',
     'PersonKey',
     'Phone Type',
@@ -440,6 +446,334 @@ export async function previewGroupRecipients(groupId: string, options: PreviewOp
     recipients,
     skippedReasons,
     notes
+  };
+}
+
+export type BroadcastAudienceType = 'all_families' | 'grade' | 'bus' | 'manual_list';
+
+export type BroadcastRecipientRow = {
+  id: string;
+  familyId: string;
+  familyName: string;
+  personName?: string;
+  phoneNumberRecordId: string;
+  phoneE164: string;
+  phoneType?: string;
+  recipientPhoneChoice: RecipientPhoneChoice;
+};
+
+export type BroadcastSkippedRow = {
+  id: string;
+  familyId?: string;
+  familyName?: string;
+  phoneNumberRecordId?: string;
+  phoneE164?: string;
+  phoneType?: string;
+  reason: string;
+  detail: string;
+};
+
+export type BroadcastRecipientPreview = {
+  planningMode: true;
+  providerConnected: false;
+  audience: {
+    type: BroadcastAudienceType;
+    value: string;
+    label: string;
+    busField?: string;
+  };
+  requestedPhoneChoices: RecipientPhoneChoice[];
+  counts: {
+    familiesFound: number;
+    phonesFound: number;
+    eligibleRecipients: number;
+    skipped: number;
+  };
+  recipients: BroadcastRecipientRow[];
+  skipped: BroadcastSkippedRow[];
+  skippedReasons: Record<string, number>;
+  notes: string[];
+};
+
+type BroadcastPreviewOptions = {
+  audienceType: BroadcastAudienceType;
+  audienceValue?: string;
+  phoneChoices?: RecipientPhoneChoice[];
+  manualPhoneRecordIds?: string[];
+};
+
+const AUDIENCE_TYPE_ALIASES: Record<string, BroadcastAudienceType> = {
+  all: 'all_families',
+  all_families: 'all_families',
+  'all families': 'all_families',
+  grade: 'grade',
+  bus: 'bus',
+  manual: 'manual_list',
+  manual_list: 'manual_list',
+  'manual list': 'manual_list'
+};
+
+export function normalizeBroadcastAudienceType(value: string): BroadcastAudienceType {
+  return AUDIENCE_TYPE_ALIASES[normalizeGroupText(value)] || 'all_families';
+}
+
+function addSkippedRow(skipped: BroadcastSkippedRow[], skippedReasons: Record<string, number>, row: BroadcastSkippedRow) {
+  skipped.push(row);
+  addSkip(skippedReasons, row.reason);
+}
+
+function skippedDetail(reason: string) {
+  const details: Record<string, string> = {
+    phone_missing_family: 'Phone number is not linked to one of the selected families.',
+    phone_missing_e164: 'Phone E164 is missing, so this number cannot be used for SMS.',
+    sms_not_allowed: 'SMS Allowed is not checked for this phone number.',
+    do_not_contact: 'Do Not Contact is checked for this phone number.',
+    invalid_bad_number: 'Invalid / Bad Number is checked for this phone number.',
+    duplicate_phone_removed: 'This E.164 number was already included once and was deduped.',
+    family_no_eligible_sms_phone: 'Family has no phone number that passes the SMS safety filters.',
+    no_mother_cell_for_family: 'No eligible mother cell matched the selected phone choices.',
+    no_father_cell_for_family: 'No eligible father cell matched the selected phone choices.',
+    no_parent_cell_for_family: 'No eligible parent cell matched the selected phone choices.',
+    no_eligible_cell_phone_for_family: 'No eligible cell phone matched the selected phone choices.',
+    no_primary_family_phone_for_family: 'No eligible primary family phone matched the selected phone choices.',
+    manual_phone_not_found: 'Selected manual phone record could not be found in Airtable.',
+    home_phone_is_voice_only_not_sms: 'Home phones are voice-only and are excluded from SMS preview.'
+  };
+
+  return details[reason] || reason.replace(/_/g, ' ');
+}
+
+function readableChoice(choice: RecipientPhoneChoice) {
+  const labels: Record<RecipientPhoneChoice, string> = {
+    primary_family: 'Primary family phone',
+    mother_cell: 'Mother cell',
+    father_cell: 'Father cell',
+    home: 'Home phone',
+    all_parent_cells: 'All parent cells',
+    all_eligible_phones: 'All eligible phones'
+  };
+
+  return labels[choice];
+}
+
+function normalizeAudienceValue(value: string) {
+  return value.trim().replace(/^grade\s+/i, '').replace(/^bus\s+/i, '').replace(/\s+families$/i, '').trim();
+}
+
+function busFieldFromStudents(students: AirtableRecord[]) {
+  const preferred = ['Bus', 'Bus Route', 'Bus Number', 'Transportation Bus', 'Dismissal Bus', 'AM Bus', 'PM Bus'];
+  const available = new Set<string>();
+
+  for (const student of students) {
+    for (const fieldName of Object.keys(student.fields || {})) {
+      if (/bus/i.test(fieldName) && firstText(student, [fieldName])) available.add(fieldName);
+    }
+  }
+
+  return preferred.find((fieldName) => available.has(fieldName)) || Array.from(available)[0] || '';
+}
+
+async function familiesForBroadcastAudience(audienceType: BroadcastAudienceType, audienceValue = '') {
+  const notes: string[] = [];
+  const familyIds = new Set<string>();
+  let label = 'All Families';
+  let busField = '';
+
+  if (audienceType === 'all_families') {
+    const families = await listAllRecords(FAMILY_TABLE);
+    for (const family of families) familyIds.add(family.id);
+    notes.push('All Families preview selected every family record from Airtable.');
+    return { familyIds, label, busField, notes };
+  }
+
+  if (audienceType === 'grade') {
+    const gradeToken = normalizeAudienceValue(audienceValue);
+    label = gradeToken ? `Grade ${gradeToken}` : 'Grade';
+    const students = await listAllRecords(STUDENTS_TABLE);
+    const matchedStudents = gradeToken
+      ? students.filter((student) => studentGradeMatches(firstText(student, ['Grade']), gradeToken))
+      : [];
+    const matchedFamilyIds = await familyIdsFromStudentRecords(matchedStudents);
+    for (const familyId of matchedFamilyIds) familyIds.add(familyId);
+    notes.push(gradeToken ? `Grade preview matched Students where Grade looks like "${gradeToken}".` : 'Enter a grade value, such as 4, to preview grade recipients.');
+    return { familyIds, label, busField, notes };
+  }
+
+  if (audienceType === 'bus') {
+    const busToken = normalizeAudienceValue(audienceValue);
+    label = busToken ? `Bus ${busToken}` : 'Bus';
+    const students = await listAllRecords(STUDENTS_TABLE);
+    busField = busFieldFromStudents(students);
+
+    if (!busField) {
+      notes.push('No usable bus field with values was found on the Students table. Bus preview returned zero recipients.');
+      return { familyIds, label, busField, notes };
+    }
+
+    const normalizedBusToken = normalizeGroupText(busToken);
+    const matchedStudents = normalizedBusToken
+      ? students.filter((student) => normalizeGroupText(firstText(student, [busField])).replace(/^bus\s+/, '') === normalizedBusToken)
+      : [];
+    const matchedFamilyIds = await familyIdsFromStudentRecords(matchedStudents);
+    for (const familyId of matchedFamilyIds) familyIds.add(familyId);
+    notes.push(busToken ? `Bus preview used Students field "${busField}" and matched value "${busToken}".` : `Students has a usable bus field ("${busField}"). Enter a bus value to preview recipients.`);
+    return { familyIds, label, busField, notes };
+  }
+
+  label = audienceValue ? `Manual List (${audienceValue.split(',').filter(Boolean).length})` : 'Manual List';
+  notes.push('Manual List preview uses Airtable phone records selected by office staff search.');
+  return { familyIds, label, busField, notes };
+}
+
+function manualIdsFromValue(value = '') {
+  return value.split(/[\s,]+/).map((id) => id.trim()).filter(Boolean);
+}
+
+function phoneSafetyReason(phone: AirtableRecord) {
+  if (!firstText(phone, ['Phone E164'])) return 'phone_missing_e164';
+  if (!checkbox(phone, 'SMS Allowed')) return 'sms_not_allowed';
+  if (checkbox(phone, 'Do Not Contact')) return 'do_not_contact';
+  if (checkbox(phone, 'Invalid / Bad Number')) return 'invalid_bad_number';
+  return '';
+}
+
+function choiceForPhone(phone: AirtableRecord, requestedPhoneChoices: RecipientPhoneChoice[], personInfo?: PhonePersonInfo) {
+  return requestedPhoneChoices.find((choice) => matchesChoice(phone, choice, personInfo));
+}
+
+export async function previewBroadcastRecipients(options: BroadcastPreviewOptions): Promise<BroadcastRecipientPreview> {
+  const audienceType = options.audienceType;
+  const audienceValue = options.audienceValue || '';
+  const requestedPhoneChoices = options.phoneChoices?.length ? options.phoneChoices : DEFAULT_PHONE_CHOICES;
+  const skippedReasons: Record<string, number> = {};
+  const skipped: BroadcastSkippedRow[] = [];
+  const { familyIds, label, busField, notes } = await familiesForBroadcastAudience(audienceType, audienceValue);
+  const manualPhoneRecordIds = audienceType === 'manual_list'
+    ? Array.from(new Set([...(options.manualPhoneRecordIds || []), ...manualIdsFromValue(audienceValue)]))
+    : [];
+
+  const [familyRecords, personInfoByPhoneId, phoneRecords] = await Promise.all([
+    familyIds.size > 0 ? findRecordsById(FAMILY_TABLE, Array.from(familyIds)) : Promise.resolve([]),
+    peopleByPhoneNumberRecordId(),
+    listAllRecords(PHONE_NUMBERS_TABLE)
+  ]);
+
+  const familyNamesById = new Map(familyRecords.map((family) => [family.id, firstText(family, ['Family Display Name', 'Family Name', 'Name', 'FamilyKey'], family.id)]));
+  const phoneRecordsById = new Map(phoneRecords.map((phone) => [phone.id, phone]));
+  const selectedPhones = audienceType === 'manual_list'
+    ? manualPhoneRecordIds.map((id) => phoneRecordsById.get(id)).filter((phone): phone is AirtableRecord => Boolean(phone))
+    : phoneRecords.filter((phone) => linkedRecordIds(phone, 'FamilyKey').some((familyId) => familyIds.has(familyId)));
+
+  if (audienceType === 'manual_list') {
+    const foundManualIds = new Set(selectedPhones.map((phone) => phone.id));
+    for (const phoneId of manualPhoneRecordIds) {
+      if (!foundManualIds.has(phoneId)) {
+        addSkippedRow(skipped, skippedReasons, {
+          id: `missing-${phoneId}`,
+          phoneNumberRecordId: phoneId,
+          reason: 'manual_phone_not_found',
+          detail: skippedDetail('manual_phone_not_found')
+        });
+      }
+    }
+
+    const manualFamilyIds = new Set<string>();
+    for (const phone of selectedPhones) {
+      for (const familyId of linkedRecordIds(phone, 'FamilyKey')) manualFamilyIds.add(familyId);
+    }
+    if (manualFamilyIds.size > 0) {
+      const manualFamilies = await findRecordsById(FAMILY_TABLE, Array.from(manualFamilyIds));
+      for (const family of manualFamilies) familyNamesById.set(family.id, firstText(family, ['Family Display Name', 'Family Name', 'Name', 'FamilyKey'], family.id));
+    }
+    for (const familyId of manualFamilyIds) familyIds.add(familyId);
+  }
+
+  const recipients: BroadcastRecipientRow[] = [];
+  const usedPhoneE164 = new Set<string>();
+  const eligiblePhonesByFamily = new Map<string, AirtableRecord[]>();
+
+  for (const phone of selectedPhones) {
+    const familyRecordIds = linkedRecordIds(phone, 'FamilyKey');
+    const phoneE164 = firstText(phone, ['Phone E164']);
+    const phoneType = firstText(phone, ['Phone Type']);
+    const safetyReason = phoneSafetyReason(phone);
+    const relevantFamilyIds = audienceType === 'manual_list' ? familyRecordIds : familyRecordIds.filter((familyId) => familyIds.has(familyId));
+
+    if (relevantFamilyIds.length === 0 && audienceType !== 'manual_list') {
+      addSkippedRow(skipped, skippedReasons, { id: `skip-family-${phone.id}`, phoneNumberRecordId: phone.id, phoneE164, phoneType, reason: 'phone_missing_family', detail: skippedDetail('phone_missing_family') });
+      continue;
+    }
+
+    if (safetyReason) {
+      addSkippedRow(skipped, skippedReasons, { id: `skip-safe-${phone.id}`, familyId: relevantFamilyIds[0], familyName: familyNamesById.get(relevantFamilyIds[0]), phoneNumberRecordId: phone.id, phoneE164, phoneType, reason: safetyReason, detail: skippedDetail(safetyReason) });
+      continue;
+    }
+
+    const personInfo = personInfoByPhoneId.get(phone.id);
+    const matchedChoice = choiceForPhone(phone, requestedPhoneChoices, personInfo);
+    if (!matchedChoice) {
+      const reason = requestedPhoneChoices.length === 1 ? noMatchReason(requestedPhoneChoices[0]) : 'no_parent_cell_for_family';
+      addSkippedRow(skipped, skippedReasons, { id: `skip-choice-${phone.id}`, familyId: relevantFamilyIds[0], familyName: familyNamesById.get(relevantFamilyIds[0]), phoneNumberRecordId: phone.id, phoneE164, phoneType, reason, detail: `${skippedDetail(reason)} Selected choices: ${requestedPhoneChoices.map(readableChoice).join(', ')}.` });
+      continue;
+    }
+
+    for (const familyId of relevantFamilyIds.length ? relevantFamilyIds : ['manual']) {
+      const existing = eligiblePhonesByFamily.get(familyId) || [];
+      existing.push(phone);
+      eligiblePhonesByFamily.set(familyId, existing);
+    }
+
+    if (usedPhoneE164.has(phoneE164)) {
+      addSkippedRow(skipped, skippedReasons, { id: `skip-dupe-${phone.id}`, familyId: relevantFamilyIds[0], familyName: familyNamesById.get(relevantFamilyIds[0]), phoneNumberRecordId: phone.id, phoneE164, phoneType, reason: 'duplicate_phone_removed', detail: skippedDetail('duplicate_phone_removed') });
+      continue;
+    }
+
+    usedPhoneE164.add(phoneE164);
+    recipients.push({
+      id: phone.id,
+      familyId: relevantFamilyIds[0] || 'manual',
+      familyName: familyNamesById.get(relevantFamilyIds[0]) || 'Manual contact',
+      personName: personInfo?.name,
+      phoneNumberRecordId: phone.id,
+      phoneE164,
+      phoneType,
+      recipientPhoneChoice: matchedChoice
+    });
+  }
+
+  if (audienceType !== 'manual_list') {
+    for (const familyId of familyIds) {
+      if (!eligiblePhonesByFamily.has(familyId)) {
+        addSkippedRow(skipped, skippedReasons, {
+          id: `skip-empty-${familyId}`,
+          familyId,
+          familyName: familyNamesById.get(familyId) || familyId,
+          reason: 'family_no_eligible_sms_phone',
+          detail: skippedDetail('family_no_eligible_sms_phone')
+        });
+      }
+    }
+  }
+
+  return {
+    planningMode: true,
+    providerConnected: false,
+    audience: { type: audienceType, value: audienceValue, label, busField: busField || undefined },
+    requestedPhoneChoices,
+    counts: {
+      familiesFound: familyIds.size,
+      phonesFound: selectedPhones.length,
+      eligibleRecipients: recipients.length,
+      skipped: skipped.length
+    },
+    recipients,
+    skipped,
+    skippedReasons,
+    notes: [
+      ...notes,
+      'Preview is read-only. TextGrid is not connected and no SMS is sent.',
+      'Home phones are voice-only and are excluded from SMS preview.'
+    ]
   };
 }
 

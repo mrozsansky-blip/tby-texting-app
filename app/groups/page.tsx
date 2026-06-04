@@ -1,9 +1,5 @@
-import { GroupsTable } from '@/components/GroupsTable';
+import { redirect } from 'next/navigation';
 
 export default function GroupsPage() {
-  return (
-    <main className="min-h-screen p-8">
-      <GroupsTable />
-    </main>
-  );
+  redirect('/broadcasts');
 }

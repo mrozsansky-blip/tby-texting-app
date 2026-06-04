@@ -47,11 +47,18 @@ export async function GET() {
     action: 'preview',
     tableName: 'Communication Groups',
     starterGroups: STARTER_GROUPS,
-    note: 'Send a POST request to this route to create missing starter groups. No SMS will be sent.'
+    note: 'Read-only preview. POST is disabled unless AIRTABLE_DEMO_WRITE_ENABLED=true is set explicitly. No SMS will be sent.'
   });
 }
 
 export async function POST() {
+  if (process.env.AIRTABLE_DEMO_WRITE_ENABLED !== 'true') {
+    return NextResponse.json(
+      { error: 'Airtable demo writes are disabled. Set AIRTABLE_DEMO_WRITE_ENABLED=true only when demo record creation is explicitly needed.' },
+      { status: 403 }
+    );
+  }
+
   const base = getBase();
   if (!base) {
     return NextResponse.json({ error: 'Airtable env vars are missing or invalid.' }, { status: 500 });

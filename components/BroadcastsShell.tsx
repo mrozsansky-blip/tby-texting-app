@@ -3,23 +3,55 @@
 import { useMemo, useState } from 'react';
 import { CalendarClock, CheckCircle2, Megaphone, Search, Send } from 'lucide-react';
 
+type AudienceType = 'all_families' | 'grade' | 'bus' | 'manual_list';
+type PhoneChoice = 'mother_cell' | 'father_cell';
+type BroadcastStatus = 'New Broadcast' | 'Drafts' | 'Scheduled' | 'Past';
+
 type Recipient = {
   id: string;
-  family: string;
-  person: string;
-  type: 'Mother cell' | 'Father cell';
-  phone: string;
+  familyId: string;
+  familyName: string;
+  personName?: string;
+  phoneNumberRecordId: string;
+  phoneE164: string;
+  phoneType?: string;
+  recipientPhoneChoice: PhoneChoice;
   checked: boolean;
 };
 
-type BroadcastStatus = 'All' | 'Drafts' | 'Scheduled' | 'Past';
+type SkippedRecipient = {
+  id: string;
+  familyName?: string;
+  phoneE164?: string;
+  phoneType?: string;
+  reason: string;
+  detail: string;
+};
 
-const initialRecipients: Recipient[] = [
-  { id: '1', family: 'Sample Family A', person: 'Parent A', type: 'Mother cell', phone: '***1234', checked: true },
-  { id: '2', family: 'Sample Family A', person: 'Parent B', type: 'Father cell', phone: '***7788', checked: true },
-  { id: '3', family: 'Sample Family B', person: 'Parent C', type: 'Mother cell', phone: '***4422', checked: true },
-  { id: '4', family: 'Sample Family C', person: 'Parent D', type: 'Father cell', phone: '***8899', checked: true }
-];
+type PreviewResponse = {
+  audience: { label: string; busField?: string };
+  counts: { familiesFound: number; phonesFound: number; eligibleRecipients: number; skipped: number };
+  recipients: Array<Omit<Recipient, 'checked'>>;
+  skipped: SkippedRecipient[];
+  skippedReasons: Record<string, number>;
+  notes: string[];
+  planningMode: true;
+  providerConnected: false;
+  error?: string;
+  details?: string;
+};
+
+type PhoneSearchResult = {
+  id: string;
+  dropdownLabel: string;
+  familyName?: string;
+  personName?: string;
+  phoneE164?: string;
+  phoneType?: string;
+  smsAllowed: boolean;
+  doNotContact: boolean;
+  invalidBadNumber: boolean;
+};
 
 const broadcastRows = [
   { title: 'Grade 4 Forms Reminder', status: 'Draft', tab: 'Drafts', audience: 'Grade 4 families', count: 143, time: 'Created today' },
@@ -27,82 +59,196 @@ const broadcastRows = [
   { title: 'All Families Notice', status: 'Processed - not sent', tab: 'Past', audience: 'All Families', count: 684, time: 'Yesterday' }
 ];
 
+const audienceLabels: Record<AudienceType, string> = {
+  all_families: 'All Families',
+  grade: 'Grade',
+  bus: 'Bus',
+  manual_list: 'Manual List'
+};
+
+function maskPhone(phone: string) {
+  return phone.length > 4 ? `***${phone.slice(-4)}` : phone;
+}
+
+function phoneChoiceLabel(choice: PhoneChoice) {
+  return choice === 'mother_cell' ? 'Mother cell' : 'Father cell';
+}
+
+function reasonLabel(reason: string) {
+  return reason.replace(/_/g, ' ');
+}
+
 export function BroadcastsShell() {
-  const [audience, setAudience] = useState('Grade 4 families');
+  const [audienceType, setAudienceType] = useState<AudienceType>('all_families');
+  const [audienceValue, setAudienceValue] = useState('');
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('Reminder from Tiferes Bais Yaakov: forms are due tomorrow. Thank you.');
   const [sendMother, setSendMother] = useState(true);
   const [sendFather, setSendFather] = useState(true);
-  const [recipients, setRecipients] = useState(initialRecipients);
-  const [activeTab, setActiveTab] = useState<BroadcastStatus>('All');
+  const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [skipped, setSkipped] = useState<SkippedRecipient[]>([]);
+  const [previewCounts, setPreviewCounts] = useState({ familiesFound: 0, phonesFound: 0, eligibleRecipients: 0, skipped: 0 });
+  const [previewNotes, setPreviewNotes] = useState<string[]>([]);
+  const [previewLabel, setPreviewLabel] = useState('No Airtable preview loaded yet');
+  const [activeTab, setActiveTab] = useState<BroadcastStatus>('New Broadcast');
   const [broadcastSearch, setBroadcastSearch] = useState('');
-  const [audienceSearch, setAudienceSearch] = useState('');
-  const [visualStatus, setVisualStatus] = useState('Ready to create a visual broadcast workflow. No SMS will be sent.');
+  const [visualStatus, setVisualStatus] = useState('Ready. Choose an audience and preview Airtable recipients. No SMS will be sent.');
   const [showSchedulePanel, setShowSchedulePanel] = useState(false);
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('09:00');
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [manualSearch, setManualSearch] = useState('');
+  const [manualSearchResults, setManualSearchResults] = useState<PhoneSearchResult[]>([]);
+  const [manualPhones, setManualPhones] = useState<PhoneSearchResult[]>([]);
+  const [isManualSearchLoading, setIsManualSearchLoading] = useState(false);
 
   const selectedCount = recipients.filter((recipient) => recipient.checked).length;
   const characterCount = message.length;
   const smsParts = Math.max(1, Math.ceil(characterCount / 160));
+  const requestedPhoneChoices: PhoneChoice[] = [sendMother ? 'mother_cell' : null, sendFather ? 'father_cell' : null].filter(Boolean) as PhoneChoice[];
   const displayedRows = broadcastRows.filter((row) => {
-    const matchesTab = activeTab === 'All' || row.tab === activeTab;
+    const matchesTab = row.tab === activeTab;
     const searchText = [row.title, row.status, row.audience, row.time].join(' ').toLowerCase();
     return matchesTab && searchText.includes(broadcastSearch.toLowerCase());
   });
   const autoTitle = useMemo(() => {
     const words = message.replace(/[^a-zA-Z0-9 ]/g, '').split(' ').filter(Boolean).slice(0, 4).join(' ');
-    return `${audience || 'Broadcast'} - ${words || 'Message'} - Today`;
-  }, [audience, message]);
+    return `${previewLabel || audienceLabels[audienceType]} - ${words || 'Message'} - Today`;
+  }, [audienceType, message, previewLabel]);
+
+  function resetPreview(status: string) {
+    setRecipients([]);
+    setSkipped([]);
+    setPreviewCounts({ familiesFound: 0, phonesFound: 0, eligibleRecipients: 0, skipped: 0 });
+    setPreviewNotes([]);
+    setPreviewLabel('No Airtable preview loaded yet');
+    setVisualStatus(status);
+  }
 
   function setAll(checked: boolean) {
     setRecipients((current) => current.map((recipient) => ({ ...recipient, checked })));
-    setVisualStatus(checked ? 'All eligible recipients are selected.' : 'All recipients are deselected. Select at least one before sending.');
+    setVisualStatus(checked ? 'All eligible preview recipients are checked.' : 'All preview recipients are unchecked. Select at least one before visual processing.');
   }
 
-  function selectType(type: Recipient['type'] | 'both') {
-    setRecipients((current) => current.map((recipient) => ({ ...recipient, checked: type === 'both' || recipient.type === type })));
-    setVisualStatus(type === 'both' ? 'Mother and father cells are selected.' : `${type} recipients are selected.`);
+  function selectType(type: PhoneChoice | 'both') {
+    setRecipients((current) => current.map((recipient) => ({ ...recipient, checked: type === 'both' || recipient.recipientPhoneChoice === type })));
+    setVisualStatus(type === 'both' ? 'Mother and father cells are selected.' : `${phoneChoiceLabel(type)} recipients are selected.`);
   }
 
   function toggleRecipient(id: string) {
     setRecipients((current) => current.map((recipient) => recipient.id === id ? { ...recipient, checked: !recipient.checked } : recipient));
-    setVisualStatus('Recipient checklist updated. Only checked recipients will be used.');
+    setVisualStatus('Recipient checklist updated. This is visual only.');
   }
 
   function startNewBroadcast() {
-    setAudience('Grade 4 families');
+    setAudienceType('all_families');
+    setAudienceValue('');
     setTitle('');
     setMessage('');
     setSendMother(true);
     setSendFather(true);
-    setRecipients(initialRecipients);
     setShowSchedulePanel(false);
-    setVisualStatus('New visual broadcast started. Choose an audience, write a message, then preview recipients.');
+    setActiveTab('New Broadcast');
+    setManualPhones([]);
+    setManualSearchResults([]);
+    resetPreview('New visual broadcast started. Choose an Airtable audience and preview recipients.');
   }
 
-  function chooseAudience(choice: string) {
-    const audienceLabel = choice === 'Grade' ? 'Grade 4 families' : choice === 'Class' ? 'Class 4A families' : choice === 'Bus' ? 'Bus 6 families' : choice;
-    setAudience(audienceLabel);
-    setVisualStatus(`Audience set to ${audienceLabel}.`);
+  function chooseAudience(choice: AudienceType) {
+    setAudienceType(choice);
+    setAudienceValue('');
+    resetPreview(`${audienceLabels[choice]} selected. Preview recipients to load Airtable data.`);
   }
 
-  function useAudienceSearch() {
-    if (!audienceSearch.trim()) {
-      setVisualStatus('Type an audience search first, such as Grade 4, Bus 6, or a family name.');
+  async function previewRecipients() {
+    if (requestedPhoneChoices.length === 0) {
+      setVisualStatus('Choose Mother cell and/or Father cell before previewing. Home phones are voice-only and disabled for SMS.');
       return;
     }
-    setAudience(audienceSearch.trim());
-    setVisualStatus(`Audience search selected: ${audienceSearch.trim()}.`);
+
+    if ((audienceType === 'grade' || audienceType === 'bus') && !audienceValue.trim()) {
+      setVisualStatus(`Enter a ${audienceLabels[audienceType].toLowerCase()} value before previewing.`);
+      return;
+    }
+
+    if (audienceType === 'manual_list' && manualPhones.length === 0) {
+      setVisualStatus('Search Airtable phone numbers and add at least one manual recipient before previewing.');
+      return;
+    }
+
+    setIsPreviewLoading(true);
+    setVisualStatus('Loading read-only recipient preview from Airtable...');
+
+    try {
+      const response = await fetch('/api/broadcasts/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audienceType,
+          audienceValue: audienceType === 'manual_list' ? manualPhones.map((phone) => phone.id).join(',') : audienceValue,
+          phoneChoices: requestedPhoneChoices,
+          manualPhoneRecordIds: manualPhones.map((phone) => phone.id)
+        })
+      });
+      const data = await response.json() as PreviewResponse;
+
+      if (!response.ok || data.error) {
+        throw new Error(data.details || data.error || 'Preview failed.');
+      }
+
+      setRecipients(data.recipients.map((recipient) => ({ ...recipient, checked: true })));
+      setSkipped(data.skipped || []);
+      setPreviewCounts(data.counts);
+      setPreviewNotes(data.notes || []);
+      setPreviewLabel(data.audience.label);
+      setVisualStatus(`Preview loaded from Airtable: ${data.counts.eligibleRecipients} eligible recipients, ${data.counts.skipped} skipped. No SMS sent.`);
+    } catch (error) {
+      resetPreview(`Could not load Airtable preview: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  }
+
+  async function searchManualPhones() {
+    if (manualSearch.trim().length < 2) {
+      setVisualStatus('Type at least 2 characters or digits to search Airtable phone numbers.');
+      return;
+    }
+
+    setIsManualSearchLoading(true);
+    setVisualStatus('Searching Airtable phone numbers for manual list preview...');
+
+    try {
+      const response = await fetch(`/api/phones/search?q=${encodeURIComponent(manualSearch.trim())}`);
+      const data = await response.json() as { phones?: PhoneSearchResult[]; details?: string; error?: string };
+      if (!response.ok || data.error) throw new Error(data.details || data.error || 'Phone search failed.');
+      setManualSearchResults(data.phones || []);
+      setVisualStatus(`Found ${(data.phones || []).length} Airtable phone records. Add recipients to the manual list, then preview.`);
+    } catch (error) {
+      setManualSearchResults([]);
+      setVisualStatus(`Could not search Airtable phone numbers: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsManualSearchLoading(false);
+    }
+  }
+
+  function addManualPhone(phone: PhoneSearchResult) {
+    setManualPhones((current) => current.some((item) => item.id === phone.id) ? current : [...current, phone]);
+    resetPreview('Manual recipient added. Preview again to apply SMS safety filters and dedupe.');
+  }
+
+  function removeManualPhone(id: string) {
+    setManualPhones((current) => current.filter((phone) => phone.id !== id));
+    resetPreview('Manual recipient removed. Preview again to update the checklist.');
   }
 
   function saveDraft() {
-    setVisualStatus(`Draft saved visually as "${title || autoTitle}". No SMS was sent.`);
+    setVisualStatus(`Draft saved visually as "${title || autoTitle}". No SMS was sent and no Airtable record was written.`);
   }
 
   function scheduleBroadcast() {
     setShowSchedulePanel(true);
-    setVisualStatus('Choose a date and time, then save the schedule.');
+    setVisualStatus('Choose a date and time, then save the visual schedule. Provider remains disconnected.');
   }
 
   function saveSchedule() {
@@ -111,19 +257,19 @@ export function BroadcastsShell() {
       return;
     }
     setShowSchedulePanel(false);
-    setVisualStatus(`Broadcast scheduled visually for ${scheduledDate} at ${scheduledTime}. Provider not connected, so no SMS will send yet.`);
+    setVisualStatus(`Broadcast scheduled visually for ${scheduledDate} at ${scheduledTime}. Status: not sent — provider not connected.`);
   }
 
   function sendNow() {
     if (!message.trim()) {
-      setVisualStatus('Write a message before sending.');
+      setVisualStatus('Write a message before visual processing.');
       return;
     }
     if (selectedCount === 0) {
-      setVisualStatus('No recipients selected. Check at least one recipient before sending.');
+      setVisualStatus('No recipients selected. Check at least one preview recipient before visual processing.');
       return;
     }
-    setVisualStatus(`Broadcast processed visually for ${selectedCount} selected recipients. Status: not sent - provider not connected.`);
+    setVisualStatus(`Broadcast processed visually for ${selectedCount} selected recipients. Status: not sent — provider not connected.`);
   }
 
   return (
@@ -132,12 +278,12 @@ export function BroadcastsShell() {
         <div className="broadcast-list-header">
           <div>
             <h1 className="inbox-title">Broadcasts</h1>
-            <p className="helper-text">Drafts, scheduled, and past mass texts.</p>
+            <p className="helper-text">Mass texting workspace only.</p>
           </div>
-          <button className="btn btn-primary" onClick={startNewBroadcast}><Megaphone size={16} /> New</button>
+          <button className="btn btn-primary" onClick={startNewBroadcast}><Megaphone size={16} /> New Broadcast</button>
         </div>
         <div className="broadcast-tabs">
-          {(['All', 'Drafts', 'Scheduled', 'Past'] as BroadcastStatus[]).map((tab) => (
+          {(['New Broadcast', 'Drafts', 'Scheduled', 'Past'] as BroadcastStatus[]).map((tab) => (
             <button className={`tag tab-button ${activeTab === tab ? 'active-tab' : ''}`} key={tab} onClick={() => setActiveTab(tab)}>{tab}</button>
           ))}
         </div>
@@ -159,7 +305,8 @@ export function BroadcastsShell() {
               </div>
             </button>
           ))}
-          {displayedRows.length === 0 ? <p className="helper-text">No visual broadcasts match this filter.</p> : null}
+          {activeTab === 'New Broadcast' ? <p className="helper-text">Use the workspace to prepare a new mass text. Nothing will be sent.</p> : null}
+          {activeTab !== 'New Broadcast' && displayedRows.length === 0 ? <p className="helper-text">No visual broadcasts match this filter.</p> : null}
         </div>
       </aside>
 
@@ -167,7 +314,7 @@ export function BroadcastsShell() {
         <header className="chat-head">
           <div>
             <h2 className="chat-title">New Broadcast</h2>
-            <p className="chat-subtitle">Visual workflow only: prepare, preview, schedule, or process without sending SMS.</p>
+            <p className="chat-subtitle">Read-only Airtable recipient preview. TextGrid is not connected.</p>
           </div>
           <div className="status-pill">Provider not connected</div>
         </header>
@@ -177,34 +324,46 @@ export function BroadcastsShell() {
 
           <section className="broadcast-step-card">
             <StepTitle number="1" title="Choose audience" />
-            <div className="broadcast-search-wrap">
-              <Search size={16} />
-              <input
-                className="inbox-search-input"
-                value={audienceSearch}
-                onChange={(event) => setAudienceSearch(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') useAudienceSearch();
-                }}
-                placeholder="Search families, students, grades, buses..."
-              />
-              <button className="mini-action-button" onClick={useAudienceSearch}>Use</button>
-            </div>
             <div className="choice-row broadcast-choice-row">
-              {['All Families', 'Grade', 'Class', 'Bus', 'Manual List'].map((choice) => (
-                <button className="choice-pill" key={choice} onClick={() => chooseAudience(choice)}>{choice}</button>
+              {(['all_families', 'grade', 'bus', 'manual_list'] as AudienceType[]).map((choice) => (
+                <button className={`choice-pill ${audienceType === choice ? 'selected-choice' : ''}`} key={choice} onClick={() => chooseAudience(choice)}>{audienceLabels[choice]}</button>
               ))}
             </div>
-            <p className="helper-text">Selected audience: <strong>{audience}</strong></p>
+            {audienceType === 'grade' || audienceType === 'bus' ? (
+              <div className="broadcast-search-wrap audience-value-wrap">
+                <Search size={16} />
+                <input
+                  className="inbox-search-input"
+                  value={audienceValue}
+                  onChange={(event) => { setAudienceValue(event.target.value); resetPreview(`${audienceLabels[audienceType]} value updated. Preview recipients to refresh Airtable data.`); }}
+                  onKeyDown={(event) => { if (event.key === 'Enter') void previewRecipients(); }}
+                  placeholder={audienceType === 'grade' ? 'Enter grade, e.g. 4' : 'Enter bus, e.g. 6'}
+                />
+              </div>
+            ) : null}
+            {audienceType === 'manual_list' ? (
+              <ManualListSearch
+                manualSearch={manualSearch}
+                setManualSearch={setManualSearch}
+                searchManualPhones={searchManualPhones}
+                isManualSearchLoading={isManualSearchLoading}
+                manualSearchResults={manualSearchResults}
+                manualPhones={manualPhones}
+                addManualPhone={addManualPhone}
+                removeManualPhone={removeManualPhone}
+              />
+            ) : null}
+            <p className="helper-text">Selected audience: <strong>{previewLabel === 'No Airtable preview loaded yet' ? audienceLabels[audienceType] : previewLabel}</strong></p>
           </section>
 
           <section className="broadcast-step-card">
-            <StepTitle number="2" title="Choose SMS recipients" />
+            <StepTitle number="2" title="Choose SMS recipient types" />
             <div className="choice-row">
-              <label className="choice-pill"><input type="checkbox" checked={sendMother} onChange={(event) => { setSendMother(event.target.checked); setVisualStatus('Mother cell option updated.'); }} /> Mother cell</label>
-              <label className="choice-pill"><input type="checkbox" checked={sendFather} onChange={(event) => { setSendFather(event.target.checked); setVisualStatus('Father cell option updated.'); }} /> Father cell</label>
+              <label className="choice-pill"><input type="checkbox" checked={sendMother} onChange={(event) => { setSendMother(event.target.checked); resetPreview('Mother cell option updated. Preview recipients to refresh Airtable data.'); }} /> Mother cell</label>
+              <label className="choice-pill"><input type="checkbox" checked={sendFather} onChange={(event) => { setSendFather(event.target.checked); resetPreview('Father cell option updated. Preview recipients to refresh Airtable data.'); }} /> Father cell</label>
+              <span className="choice-pill disabled-choice" aria-disabled="true">Home phone disabled — voice only</span>
             </div>
-            <p className="helper-text">Home phones are voice-only and are not used for SMS.</p>
+            <p className="helper-text">SMS preview includes mother cell and/or father cell only, and only when Airtable marks the number SMS-safe.</p>
           </section>
 
           <section className="broadcast-step-card">
@@ -216,33 +375,41 @@ export function BroadcastsShell() {
           </section>
 
           <section className="broadcast-step-card">
-            <StepTitle number="4" title="Preview recipients" />
+            <StepTitle number="4" title="Preview Airtable recipients" />
+            <button className="btn btn-primary preview-button" onClick={() => void previewRecipients()} disabled={isPreviewLoading}>
+              {isPreviewLoading ? 'Loading preview...' : 'Preview recipients'}
+            </button>
             <div className="preview-stat-grid">
-              <PreviewStat label="Families found" value={82} />
-              <PreviewStat label="Eligible recipients" value={recipients.length} />
-              <PreviewStat label="Selected to send" value={selectedCount} />
-              <PreviewStat label="Skipped" value={17} />
+              <PreviewStat label="Families found" value={previewCounts.familiesFound} />
+              <PreviewStat label="Phone records" value={previewCounts.phonesFound} />
+              <PreviewStat label="Eligible recipients" value={previewCounts.eligibleRecipients} />
+              <PreviewStat label="Selected" value={selectedCount} />
+              <PreviewStat label="Skipped" value={previewCounts.skipped} />
             </div>
             <div className="recipient-toolbar">
-              <button className="btn btn-secondary" onClick={() => setAll(true)}>Check all</button>
-              <button className="btn btn-secondary" onClick={() => setAll(false)}>Deselect all</button>
-              <button className="btn btn-secondary" onClick={() => selectType('Mother cell')}>Select mother cells</button>
-              <button className="btn btn-secondary" onClick={() => selectType('Father cell')}>Select father cells</button>
-              <button className="btn btn-secondary" onClick={() => selectType('both')}>Select both</button>
+              <button className="btn btn-secondary" onClick={() => setAll(true)} disabled={recipients.length === 0}>Check all</button>
+              <button className="btn btn-secondary" onClick={() => setAll(false)} disabled={recipients.length === 0}>Deselect all</button>
+              <button className="btn btn-secondary" onClick={() => selectType('mother_cell')} disabled={recipients.length === 0}>Select mother cells</button>
+              <button className="btn btn-secondary" onClick={() => selectType('father_cell')} disabled={recipients.length === 0}>Select father cells</button>
+              <button className="btn btn-secondary" onClick={() => selectType('both')} disabled={recipients.length === 0}>Select both</button>
             </div>
             <div className="recipient-checklist">
+              {recipients.length === 0 ? <p className="helper-text empty-preview-text">No eligible recipients loaded yet. Click Preview recipients.</p> : null}
               {recipients.map((recipient) => (
                 <label className="recipient-check-row" key={recipient.id}>
                   <input type="checkbox" checked={recipient.checked} onChange={() => toggleRecipient(recipient.id)} />
-                  <span>{recipient.family} - {recipient.person}</span>
-                  <strong>{recipient.type}</strong>
-                  <span>{recipient.phone}</span>
+                  <span>{recipient.familyName}{recipient.personName ? ` - ${recipient.personName}` : ''}</span>
+                  <strong>{phoneChoiceLabel(recipient.recipientPhoneChoice)}</strong>
+                  <span>{maskPhone(recipient.phoneE164)}</span>
                 </label>
               ))}
             </div>
-            <div className="preview-notes">
-              <p className="helper-text">Skipped examples: missing father cell, SMS not allowed, Do Not Contact, invalid number, duplicate phone removed.</p>
-            </div>
+            <SkippedPreview skipped={skipped} />
+            {previewNotes.length > 0 ? (
+              <div className="preview-notes">
+                {previewNotes.map((note) => <p className="helper-text" key={note}>{note}</p>)}
+              </div>
+            ) : null}
           </section>
 
           <section className="broadcast-step-card broadcast-actions-card">
@@ -250,7 +417,7 @@ export function BroadcastsShell() {
             <div className="broadcast-actions">
               <button className="btn btn-secondary" onClick={saveDraft}><CheckCircle2 size={16} /> Save Draft</button>
               <button className="btn btn-secondary" onClick={scheduleBroadcast}><CalendarClock size={16} /> Schedule</button>
-              <button className="btn btn-primary" onClick={sendNow}><Send size={16} /> Send Now</button>
+              <button className="btn btn-primary" onClick={sendNow} disabled={!message.trim() || selectedCount === 0} title={!message.trim() || selectedCount === 0 ? 'Write a message and select at least one preview recipient first.' : undefined}><Send size={16} /> Send Now</button>
             </div>
             {showSchedulePanel ? (
               <div className="schedule-panel">
@@ -259,10 +426,92 @@ export function BroadcastsShell() {
                 <button className="btn btn-primary" onClick={saveSchedule}>Save Schedule</button>
               </div>
             ) : null}
-            <p className="helper-text">Until TextGrid is connected, Send Now will visually process the broadcast but mark recipients as not sent.</p>
+            <p className="helper-text">TextGrid is not connected. Send Now visually processes only and reports: not sent — provider not connected.</p>
           </section>
         </div>
       </section>
+    </div>
+  );
+}
+
+function ManualListSearch({
+  manualSearch,
+  setManualSearch,
+  searchManualPhones,
+  isManualSearchLoading,
+  manualSearchResults,
+  manualPhones,
+  addManualPhone,
+  removeManualPhone
+}: {
+  manualSearch: string;
+  setManualSearch: (value: string) => void;
+  searchManualPhones: () => void;
+  isManualSearchLoading: boolean;
+  manualSearchResults: PhoneSearchResult[];
+  manualPhones: PhoneSearchResult[];
+  addManualPhone: (phone: PhoneSearchResult) => void;
+  removeManualPhone: (id: string) => void;
+}) {
+  return (
+    <div className="manual-list-panel">
+      <div className="broadcast-search-wrap audience-value-wrap">
+        <Search size={16} />
+        <input
+          className="inbox-search-input"
+          value={manualSearch}
+          onChange={(event) => setManualSearch(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Enter') searchManualPhones(); }}
+          placeholder="Search Airtable phones by name or number..."
+        />
+        <button className="mini-action-button" onClick={searchManualPhones} disabled={isManualSearchLoading}>{isManualSearchLoading ? 'Searching' : 'Search'}</button>
+      </div>
+      {manualSearchResults.length > 0 ? (
+        <div className="manual-result-list">
+          {manualSearchResults.map((phone) => {
+            const alreadyAdded = manualPhones.some((selectedPhone) => selectedPhone.id === phone.id);
+            return (
+              <button className="manual-result-row" key={phone.id} onClick={() => addManualPhone(phone)} disabled={alreadyAdded}>
+                <span>{phone.dropdownLabel}</span>
+                <strong>{alreadyAdded ? 'Added' : 'Add'}</strong>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {manualPhones.length > 0 ? (
+        <div className="manual-selected-list">
+          <p className="helper-text">Manual recipients selected for preview:</p>
+          {manualPhones.map((phone) => (
+            <div className="manual-selected-row" key={phone.id}>
+              <span>{phone.dropdownLabel}</span>
+              <button className="mini-action-button" onClick={() => removeManualPhone(phone.id)}>Remove</button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SkippedPreview({ skipped }: { skipped: SkippedRecipient[] }) {
+  if (skipped.length === 0) {
+    return <div className="preview-notes"><p className="helper-text">Skipped recipients will appear here with plain-English reasons after preview.</p></div>;
+  }
+
+  return (
+    <div className="skipped-preview-list">
+      <p className="card-title">Skipped recipients</p>
+      {skipped.slice(0, 50).map((row) => (
+        <div className="skipped-preview-row" key={row.id}>
+          <div>
+            <strong>{row.familyName || row.phoneE164 || 'Airtable phone record'}</strong>
+            <p className="helper-text">{row.detail}</p>
+          </div>
+          <span className="tag">{reasonLabel(row.reason)}</span>
+        </div>
+      ))}
+      {skipped.length > 50 ? <p className="helper-text">Showing 50 of {skipped.length} skipped rows.</p> : null}
     </div>
   );
 }
