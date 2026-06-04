@@ -89,6 +89,12 @@ button, input, textarea { font-family: inherit; }
 .info-list { display: grid; gap: 14px; margin-top: 16px; }
 .info-label { font-size: 12px; color: var(--muted); font-weight: 850; text-transform: uppercase; letter-spacing: .08em; }
 .info-value { margin-top: 3px; line-height: 1.4; }
+.phone-search-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.phone-search-row .search-input { margin-top: 0; }
+.phone-result-list { display: grid; gap: 10px; margin-top: 14px; }
+.phone-result { border: 1px solid var(--line); border-radius: 18px; padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; background: #f8fbff; }
+.phone-result strong { display: block; overflow-wrap: anywhere; }
+.phone-result .btn { padding: 9px 11px; border-radius: 12px; }
 
 .groups-shell { max-width: 1120px; margin: 0 auto; border-radius: 30px; background: rgba(255,255,255,.9); border: 1px solid rgba(15,32,51,.08); box-shadow: 0 24px 80px rgba(15,32,51,.11); padding: 28px; }
 .groups-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 20px; }
@@ -132,4 +138,5 @@ button, input, textarea { font-family: inherit; }
   .inbox-left { max-height: 330px; overflow-y: auto; }
   .bubble { max-width: 92%; }
   .preview-controls { align-items: flex-start; flex-direction: column; }
+  .phone-search-row { align-items: stretch; flex-direction: column; }
 }
