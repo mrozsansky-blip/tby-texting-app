@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Bot, Send, ShieldCheck, Users } from 'lucide-react';
+import { Bot, Phone, Send, ShieldCheck, Users } from 'lucide-react';
 
 function parsePhoneNumbers(value: string) {
   return value
@@ -10,6 +10,21 @@ function parsePhoneNumbers(value: string) {
     .filter(Boolean);
 }
 
+type PhoneSearchResult = {
+  id: string;
+  display: string;
+  phoneNumber: string;
+  phoneE164: string;
+  rawPhone: string;
+  phoneType: string;
+  familyIds: string;
+  personIds: string;
+  smsAllowed: boolean;
+  voiceAllowed: boolean;
+  doNotContact: boolean;
+  invalidBadNumber: boolean;
+};
+
 export function ConversationShell() {
   const [prompt, setPrompt] = useState('Draft a warm reminder that school forms are due tomorrow.');
   const [draft, setDraft] = useState('');
@@ -17,6 +32,10 @@ export function ConversationShell() {
   const [phoneNumbers, setPhoneNumbers] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [status, setStatus] = useState('Planning mode: no SMS will be sent unless SMS_SEND_ENABLED is true in Vercel.');
+  const [phoneSearch, setPhoneSearch] = useState('');
+  const [phoneSearchResults, setPhoneSearchResults] = useState<PhoneSearchResult[]>([]);
+  const [phoneSearchStatus, setPhoneSearchStatus] = useState('Search Airtable phone numbers by name, type, or digits.');
+  const [phoneSearchLoading, setPhoneSearchLoading] = useState(false);
   const recipients = parsePhoneNumbers(phoneNumbers);
   const dedupedRecipients = Array.from(new Set(recipients));
 
@@ -31,6 +50,48 @@ export function ConversationShell() {
     setDraft(composeJson.message || '');
     setGroup(groupJson.groupSuggestion || groupJson.reason || 'No group suggested.');
     setStatus('Draft ready. Review it carefully before saving a planning record.');
+  }
+
+  async function searchAirtablePhones() {
+    if (phoneSearch.trim().length < 2) {
+      setPhoneSearchStatus('Enter at least 2 characters to search.');
+      return;
+    }
+
+    setPhoneSearchLoading(true);
+    setPhoneSearchStatus('Searching Airtable phone numbers...');
+
+    try {
+      const response = await fetch(`/api/phones/search?q=${encodeURIComponent(phoneSearch.trim())}`, { cache: 'no-store' });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setPhoneSearchResults([]);
+        setPhoneSearchStatus(data.error || 'Could not search Airtable phone numbers.');
+        return;
+      }
+
+      const phones = Array.isArray(data.phones) ? data.phones : [];
+      setPhoneSearchResults(phones);
+      setPhoneSearchStatus(phones.length === 0 ? 'No Airtable phone numbers matched.' : `Found ${phones.length} matching phone numbers.`);
+    } catch (error) {
+      setPhoneSearchResults([]);
+      setPhoneSearchStatus('Could not search Airtable phone numbers.');
+    } finally {
+      setPhoneSearchLoading(false);
+    }
+  }
+
+  function addPhoneToManualList(phone: PhoneSearchResult) {
+    const numberToAdd = phone.phoneE164 || phone.phoneNumber || phone.rawPhone;
+    if (!numberToAdd) {
+      setPhoneSearchStatus('This Airtable record does not have a usable phone number.');
+      return;
+    }
+
+    const nextNumbers = Array.from(new Set([...dedupedRecipients, numberToAdd]));
+    setPhoneNumbers(nextNumbers.join('\n'));
+    setPhoneSearchStatus(`Added ${numberToAdd} to the manual planning list. No SMS was sent.`);
   }
 
   async function savePlanningRecord() {
@@ -137,6 +198,41 @@ export function ConversationShell() {
 
       <aside className="context-panel">
         <div className="side-card">
+          <p className="card-title"><Phone size={20} /> Airtable phone search</p>
+          <div className="phone-search-row">
+            <input
+              className="search-input"
+              value={phoneSearch}
+              onChange={(e) => setPhoneSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') searchAirtablePhones();
+              }}
+              placeholder="Search name, type, or number"
+            />
+            <button className="btn btn-secondary" onClick={searchAirtablePhones}>{phoneSearchLoading ? 'Searching...' : 'Search'}</button>
+          </div>
+          <p className="helper-text" style={{ marginTop: 10 }}>{phoneSearchStatus}</p>
+          {phoneSearchResults.length > 0 ? (
+            <div className="phone-result-list">
+              {phoneSearchResults.map((phone) => (
+                <div className="phone-result" key={phone.id}>
+                  <div>
+                    <strong>{phone.display}</strong>
+                    <p className="helper-text">{phone.phoneType || 'No type'} • {phone.phoneE164 || phone.phoneNumber || 'No number'}</p>
+                    <div className="tags">
+                      <span className="tag">SMS {phone.smsAllowed ? 'allowed' : 'not allowed'}</span>
+                      {phone.doNotContact ? <span className="tag">Do not contact</span> : null}
+                      {phone.invalidBadNumber ? <span className="tag">Bad number</span> : null}
+                    </div>
+                  </div>
+                  <button className="btn btn-secondary" onClick={() => addPhoneToManualList(phone)}>Add</button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="side-card">
           <p className="card-title"><Bot size={20} /> AI compose and group finder</p>
           <textarea className="ai-prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
           <button onClick={askAi} className="btn btn-primary" style={{ width: '100%', marginTop: 12 }}>Draft and find group</button>
@@ -149,7 +245,7 @@ export function ConversationShell() {
             <Info label="Live inbox" value="Not connected yet" />
             <Info label="Manual phones" value={`${dedupedRecipients.length} unique numbers`} />
             <Info label="SMS sending" value="Disabled unless SMS_SEND_ENABLED=true" />
-            <Info label="Next build step" value="Recipient preview by Airtable group" />
+            <Info label="Next build step" value="Create Message Queue preview rows" />
           </div>
         </div>
 
