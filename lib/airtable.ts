@@ -690,7 +690,8 @@ export async function previewBroadcastRecipients(options: BroadcastPreviewOption
 
   const recipients: BroadcastRecipientRow[] = [];
   const usedPhoneE164 = new Set<string>();
-  const eligiblePhonesByFamily = new Map<string, AirtableRecord[]>();
+  const smsSafePhonesByFamily = new Map<string, AirtableRecord[]>();
+  const matchedChoicesByFamily = new Map<string, Set<RecipientPhoneChoice>>();
 
   for (const phone of selectedPhones) {
     const familyRecordIds = linkedRecordIds(phone, 'FamilyKey');
@@ -709,6 +710,12 @@ export async function previewBroadcastRecipients(options: BroadcastPreviewOption
       continue;
     }
 
+    for (const familyId of relevantFamilyIds.length ? relevantFamilyIds : ['manual']) {
+      const existing = smsSafePhonesByFamily.get(familyId) || [];
+      existing.push(phone);
+      smsSafePhonesByFamily.set(familyId, existing);
+    }
+
     const personInfo = personInfoByPhoneId.get(phone.id);
     const matchedChoice = choiceForPhone(phone, requestedPhoneChoices, personInfo);
     if (!matchedChoice) {
@@ -718,9 +725,9 @@ export async function previewBroadcastRecipients(options: BroadcastPreviewOption
     }
 
     for (const familyId of relevantFamilyIds.length ? relevantFamilyIds : ['manual']) {
-      const existing = eligiblePhonesByFamily.get(familyId) || [];
-      existing.push(phone);
-      eligiblePhonesByFamily.set(familyId, existing);
+      const existing = matchedChoicesByFamily.get(familyId) || new Set<RecipientPhoneChoice>();
+      existing.add(matchedChoice);
+      matchedChoicesByFamily.set(familyId, existing);
     }
 
     if (usedPhoneE164.has(phoneE164)) {
@@ -743,7 +750,7 @@ export async function previewBroadcastRecipients(options: BroadcastPreviewOption
 
   if (audienceType !== 'manual_list') {
     for (const familyId of familyIds) {
-      if (!eligiblePhonesByFamily.has(familyId)) {
+      if (!smsSafePhonesByFamily.has(familyId)) {
         addSkippedRow(skipped, skippedReasons, {
           id: `skip-empty-${familyId}`,
           familyId,
@@ -751,6 +758,21 @@ export async function previewBroadcastRecipients(options: BroadcastPreviewOption
           reason: 'family_no_eligible_sms_phone',
           detail: skippedDetail('family_no_eligible_sms_phone')
         });
+        continue;
+      }
+
+      const matchedChoices = matchedChoicesByFamily.get(familyId) || new Set<RecipientPhoneChoice>();
+      for (const choice of requestedPhoneChoices) {
+        if (!matchedChoices.has(choice)) {
+          const reason = noMatchReason(choice);
+          addSkippedRow(skipped, skippedReasons, {
+            id: `skip-missing-${familyId}-${choice}`,
+            familyId,
+            familyName: familyNamesById.get(familyId) || familyId,
+            reason,
+            detail: skippedDetail(reason)
+          });
+        }
       }
     }
   }
