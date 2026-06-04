@@ -150,3 +150,23 @@ button, input, textarea { font-family: inherit; }
   .recipient-check-row { grid-template-columns: auto minmax(0, 1fr); }
   .broadcast-scroll { padding: 14px 14px 34px; }
 }
+
+.app-screen { min-height: 100vh; padding: 18px; }
+.app-screen .app-nav { margin-bottom: 14px; }
+.nav-pill { display: inline-flex; align-items: center; gap: 7px; }
+.scope-note { margin-top: 12px; border: 1px solid #dbeafe; background: #eff6ff; color: var(--brand-dark); border-radius: 16px; padding: 11px 12px; font-size: 13px; line-height: 1.45; font-weight: 800; }
+.app-screen .inbox-frame { height: calc(100vh - 102px); }
+.app-screen .broadcast-frame { min-height: calc(100vh - 102px); }
+.broadcast-tabs .tab-button { border: 1px solid transparent; }
+.broadcast-tabs .tab-button:hover { border-color: #c7d2fe; }
+.broadcast-row:hover, .thread-item:hover { background: #f1f6ff; }
+.btn:hover, .choice-pill:hover, .mini-action-button:hover { filter: brightness(.98); transform: translateY(-1px); }
+.btn, .choice-pill, .mini-action-button, .broadcast-row, .thread-item, .nav-pill { transition: transform .15s ease, filter .15s ease, background .15s ease, border-color .15s ease; }
+
+@media (max-width: 720px) {
+  .app-screen { padding: 12px; }
+  .app-screen .inbox-frame, .app-screen .broadcast-frame { height: auto; min-height: calc(100vh - 128px); }
+  .nav-pills { width: 100%; }
+  .nav-pill { flex: 1; justify-content: center; }
+  .compose-row { align-items: stretch; flex-direction: column; }
+}
