@@ -13,6 +13,9 @@ function parsePhoneNumbers(value: string) {
 type PhoneSearchResult = {
   id: string;
   display: string;
+  dropdownLabel?: string;
+  personName?: string;
+  familyName?: string;
   phoneNumber: string;
   phoneE164: string;
   rawPhone: string;
@@ -34,10 +37,12 @@ export function ConversationShell() {
   const [status, setStatus] = useState('Planning mode: no SMS will be sent unless SMS_SEND_ENABLED is true in Vercel.');
   const [phoneSearch, setPhoneSearch] = useState('');
   const [phoneSearchResults, setPhoneSearchResults] = useState<PhoneSearchResult[]>([]);
+  const [selectedPhoneId, setSelectedPhoneId] = useState('');
   const [phoneSearchStatus, setPhoneSearchStatus] = useState('Search Airtable phone numbers by name, type, or digits.');
   const [phoneSearchLoading, setPhoneSearchLoading] = useState(false);
   const recipients = parsePhoneNumbers(phoneNumbers);
   const dedupedRecipients = Array.from(new Set(recipients));
+  const selectedPhone = phoneSearchResults.find((phone) => phone.id === selectedPhoneId);
 
   async function askAi() {
     setStatus('Asking AI to draft and suggest a live Airtable group...');
@@ -67,22 +72,30 @@ export function ConversationShell() {
 
       if (!response.ok) {
         setPhoneSearchResults([]);
+        setSelectedPhoneId('');
         setPhoneSearchStatus(data.error || 'Could not search Airtable phone numbers.');
         return;
       }
 
       const phones = Array.isArray(data.phones) ? data.phones : [];
       setPhoneSearchResults(phones);
+      setSelectedPhoneId(phones[0]?.id || '');
       setPhoneSearchStatus(phones.length === 0 ? 'No Airtable phone numbers matched.' : `Found ${phones.length} matching phone numbers.`);
     } catch (error) {
       setPhoneSearchResults([]);
+      setSelectedPhoneId('');
       setPhoneSearchStatus('Could not search Airtable phone numbers.');
     } finally {
       setPhoneSearchLoading(false);
     }
   }
 
-  function addPhoneToManualList(phone: PhoneSearchResult) {
+  function addPhoneToManualList(phone: PhoneSearchResult | undefined) {
+    if (!phone) {
+      setPhoneSearchStatus('Choose a phone number first.');
+      return;
+    }
+
     const numberToAdd = phone.phoneE164 || phone.phoneNumber || phone.rawPhone;
     if (!numberToAdd) {
       setPhoneSearchStatus('This Airtable record does not have a usable phone number.');
@@ -207,11 +220,31 @@ export function ConversationShell() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') searchAirtablePhones();
               }}
-              placeholder="Search name, type, or number"
+              placeholder="Search family, parent, or number"
             />
             <button className="btn btn-secondary" onClick={searchAirtablePhones}>{phoneSearchLoading ? 'Searching...' : 'Search'}</button>
           </div>
           <p className="helper-text" style={{ marginTop: 10 }}>{phoneSearchStatus}</p>
+
+          {phoneSearchResults.length > 0 ? (
+            <div className="phone-dropdown-block">
+              <label className="helper-text" htmlFor="phone-result-dropdown">Choose a matching phone number</label>
+              <select
+                id="phone-result-dropdown"
+                className="search-input phone-dropdown"
+                value={selectedPhoneId}
+                onChange={(e) => setSelectedPhoneId(e.target.value)}
+              >
+                {phoneSearchResults.map((phone) => (
+                  <option value={phone.id} key={phone.id}>{phone.dropdownLabel || phone.display}</option>
+                ))}
+              </select>
+              <button className="btn btn-primary" style={{ width: '100%', marginTop: 10 }} onClick={() => addPhoneToManualList(selectedPhone)}>
+                Add selected number
+              </button>
+            </div>
+          ) : null}
+
           {phoneSearchResults.length > 0 ? (
             <div className="phone-result-list">
               {phoneSearchResults.map((phone) => (
