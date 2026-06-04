@@ -170,3 +170,126 @@ button, input, textarea { font-family: inherit; }
   .nav-pill { flex: 1; justify-content: center; }
   .compose-row { align-items: stretch; flex-direction: column; }
 }
+
+button:disabled,
+.btn:disabled,
+.mini-action-button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(.2);
+  opacity: .55;
+  transform: none;
+}
+
+.selected-choice {
+  background: var(--ink);
+  color: white;
+  border-color: var(--ink);
+}
+
+.disabled-choice {
+  background: #f1f5f9;
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.audience-value-wrap {
+  margin-top: 12px;
+}
+
+.preview-button {
+  margin-bottom: 14px;
+}
+
+.empty-preview-text {
+  margin: 0;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.manual-list-panel {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.manual-result-list,
+.manual-selected-list,
+.skipped-preview-list {
+  display: grid;
+  gap: 8px;
+}
+
+.manual-result-row,
+.manual-selected-row,
+.skipped-preview-row {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: #f8fbff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+}
+
+.manual-result-row {
+  width: 100%;
+  cursor: pointer;
+}
+
+.manual-result-row strong {
+  color: var(--brand);
+}
+
+.skipped-preview-list {
+  margin-top: 16px;
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  border-radius: 18px;
+  padding: 12px;
+}
+
+.skipped-preview-row {
+  background: white;
+}
+
+.skipped-preview-row .helper-text {
+  margin: 4px 0 0;
+}
+
+.card-title {
+  margin: 0;
+  font-weight: 900;
+  letter-spacing: -.02em;
+}
+
+@media (min-width: 1051px) {
+  .app-screen .broadcast-frame {
+    height: calc(100vh - 102px);
+    min-height: 680px;
+    overflow: hidden;
+  }
+
+  .broadcast-list-panel,
+  .broadcast-workspace {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .broadcast-row-list,
+  .broadcast-scroll {
+    overflow-y: auto;
+  }
+
+  .broadcast-row-list {
+    max-height: calc(100% - 150px);
+    padding-right: 2px;
+  }
+
+  .preview-stat-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
