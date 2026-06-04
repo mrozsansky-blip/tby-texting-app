@@ -19,6 +19,7 @@ type Recipient = {
   checked: boolean;
 };
 
+
 type SkippedRecipient = {
   id: string;
   familyName?: string;
@@ -27,6 +28,9 @@ type SkippedRecipient = {
   reason: string;
   detail: string;
 };
+=======
+type BroadcastStatus = 'New Broadcast' | 'Drafts' | 'Scheduled' | 'Past';
+
 
 type PreviewResponse = {
   audience: { label: string; busField?: string };
@@ -85,11 +89,15 @@ export function BroadcastsShell() {
   const [message, setMessage] = useState('Reminder from Tiferes Bais Yaakov: forms are due tomorrow. Thank you.');
   const [sendMother, setSendMother] = useState(true);
   const [sendFather, setSendFather] = useState(true);
+
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [skipped, setSkipped] = useState<SkippedRecipient[]>([]);
   const [previewCounts, setPreviewCounts] = useState({ familiesFound: 0, phonesFound: 0, eligibleRecipients: 0, skipped: 0 });
   const [previewNotes, setPreviewNotes] = useState<string[]>([]);
   const [previewLabel, setPreviewLabel] = useState('No Airtable preview loaded yet');
+=======
+  const [recipients, setRecipients] = useState(initialRecipients);
+
   const [activeTab, setActiveTab] = useState<BroadcastStatus>('New Broadcast');
   const [broadcastSearch, setBroadcastSearch] = useState('');
   const [visualStatus, setVisualStatus] = useState('Ready. Choose an audience and preview Airtable recipients. No SMS will be sent.');
@@ -149,9 +157,13 @@ export function BroadcastsShell() {
     setSendFather(true);
     setShowSchedulePanel(false);
     setActiveTab('New Broadcast');
+
     setManualPhones([]);
     setManualSearchResults([]);
     resetPreview('New visual broadcast started. Choose an Airtable audience and preview recipients.');
+=======
+    setVisualStatus('New visual broadcast started. Choose an audience, write a message, then preview recipients.');
+
   }
 
   function chooseAudience(choice: AudienceType) {
@@ -359,9 +371,14 @@ export function BroadcastsShell() {
           <section className="broadcast-step-card">
             <StepTitle number="2" title="Choose SMS recipient types" />
             <div className="choice-row">
+
               <label className="choice-pill"><input type="checkbox" checked={sendMother} onChange={(event) => { setSendMother(event.target.checked); resetPreview('Mother cell option updated. Preview recipients to refresh Airtable data.'); }} /> Mother cell</label>
               <label className="choice-pill"><input type="checkbox" checked={sendFather} onChange={(event) => { setSendFather(event.target.checked); resetPreview('Father cell option updated. Preview recipients to refresh Airtable data.'); }} /> Father cell</label>
               <span className="choice-pill disabled-choice" aria-disabled="true">Home phone disabled — voice only</span>
+=======
+              <label className="choice-pill"><input type="checkbox" checked={sendMother} onChange={(event) => { setSendMother(event.target.checked); setRecipients((current) => current.map((recipient) => recipient.type === 'Mother cell' ? { ...recipient, checked: event.target.checked } : recipient)); setVisualStatus('Mother cell option updated.'); }} /> Mother cell</label>
+              <label className="choice-pill"><input type="checkbox" checked={sendFather} onChange={(event) => { setSendFather(event.target.checked); setRecipients((current) => current.map((recipient) => recipient.type === 'Father cell' ? { ...recipient, checked: event.target.checked } : recipient)); setVisualStatus('Father cell option updated.'); }} /> Father cell</label>
+
             </div>
             <p className="helper-text">SMS preview includes mother cell and/or father cell only, and only when Airtable marks the number SMS-safe.</p>
           </section>
