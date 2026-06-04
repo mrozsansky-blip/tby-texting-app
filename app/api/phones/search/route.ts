@@ -2,6 +2,8 @@ import Airtable from 'airtable';
 import { NextResponse } from 'next/server';
 import { getRequiredEnv } from '@/lib/env';
 
+type AirtableRecord = Airtable.Record<Partial<Airtable.FieldSet>>;
+
 function base() {
   const apiKey = getRequiredEnv('AIRTABLE_API_KEY');
   const baseId = getRequiredEnv('AIRTABLE_BASE_ID');
@@ -15,8 +17,53 @@ function stringValue(value: unknown): string {
   return String(value);
 }
 
+function firstText(record: AirtableRecord, fieldNames: string[], fallback = '') {
+  for (const fieldName of fieldNames) {
+    const value = stringValue(record.get(fieldName));
+    if (value) return value;
+  }
+  return fallback;
+}
+
+function linkedRecordIds(record: AirtableRecord, fieldName: string): string[] {
+  const value = record.get(fieldName);
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
 function digitsOnly(value: string) {
   return value.replace(/\D/g, '');
+}
+
+async function safeAllRecords(tableName: string) {
+  try {
+    return await base()(tableName).select({ maxRecords: 5000 }).all() as AirtableRecord[];
+  } catch {
+    return [];
+  }
+}
+
+async function nameMaps() {
+  const [people, families] = await Promise.all([
+    safeAllRecords('People'),
+    safeAllRecords('Families')
+  ]);
+
+  const personNames = new Map<string, string>();
+  const familyNames = new Map<string, string>();
+
+  for (const person of people) {
+    personNames.set(person.id, firstText(person, ['Full Name', 'Person Name', 'Name', 'Display Name', 'PersonKey'], person.id));
+  }
+
+  for (const family of families) {
+    familyNames.set(family.id, firstText(family, ['Family Display Name', 'Family Name', 'Name', 'FamilyKey'], family.id));
+  }
+
+  return { personNames, familyNames };
+}
+
+function namesFromIds(ids: string[], names: Map<string, string>) {
+  return ids.map((id) => names.get(id) || id).filter(Boolean);
 }
 
 export async function GET(request: Request) {
@@ -29,48 +76,48 @@ export async function GET(request: Request) {
 
   try {
     const phoneTable = process.env.AIRTABLE_PHONE_NUMBERS_TABLE || 'Phone Numbers';
-    const records = await base()(phoneTable).select({
-      maxRecords: 2000,
-      fields: [
-        'Display Builder',
-        'FamilyKey',
-        'PersonKey',
-        'Phone Type',
-        'Phone Number',
-        'Phone E164',
-        'Phone Display',
-        'Raw Phone',
-        'SMS Allowed',
-        'Voice Allowed',
-        'Do Not Contact',
-        'Invalid / Bad Number'
-      ]
-    }).all();
+    const [{ personNames, familyNames }, records] = await Promise.all([
+      nameMaps(),
+      base()(phoneTable).select({ maxRecords: 2000 }).all() as Promise<AirtableRecord[]>
+    ]);
 
     const normalizedQuery = query.toLowerCase();
     const queryDigits = digitsOnly(query);
 
     const phones = records
       .map((record) => {
-        const display = stringValue(record.get('Display Builder')) || stringValue(record.get('Phone Display')) || stringValue(record.get('Phone Number')) || record.id;
-        const phoneNumber = stringValue(record.get('Phone Number'));
-        const phoneE164 = stringValue(record.get('Phone E164'));
-        const rawPhone = stringValue(record.get('Raw Phone'));
-        const phoneType = stringValue(record.get('Phone Type'));
-        const familyIds = stringValue(record.get('FamilyKey'));
-        const personIds = stringValue(record.get('PersonKey'));
-        const searchableText = [display, phoneNumber, phoneE164, rawPhone, phoneType, familyIds, personIds].join(' ').toLowerCase();
+        const familyRecordIds = linkedRecordIds(record, 'FamilyKey');
+        const personRecordIds = linkedRecordIds(record, 'PersonKey');
+        const familyNameList = namesFromIds(familyRecordIds, familyNames);
+        const personNameList = namesFromIds(personRecordIds, personNames);
+        const familyName = familyNameList.join(', ');
+        const personName = personNameList.join(', ');
+        const phoneNumber = firstText(record, ['Phone Number']);
+        const phoneE164 = firstText(record, ['Phone E164']);
+        const rawPhone = firstText(record, ['Raw Phone']);
+        const phoneType = firstText(record, ['Phone Type']);
+        const airtableDisplay = firstText(record, ['Display Builder', 'Phone Display']);
+        const display = [personName, familyName, phoneType, phoneE164 || phoneNumber || rawPhone]
+          .filter(Boolean)
+          .join(' • ') || airtableDisplay || record.id;
+        const dropdownLabel = [personName || familyName || airtableDisplay || 'Unknown contact', phoneType, phoneE164 || phoneNumber || rawPhone]
+          .filter(Boolean)
+          .join(' — ');
+        const searchableText = [display, dropdownLabel, phoneNumber, phoneE164, rawPhone, phoneType, familyName, personName, familyRecordIds.join(' '), personRecordIds.join(' ')].join(' ').toLowerCase();
         const searchableDigits = digitsOnly([phoneNumber, phoneE164, rawPhone, display].join(' '));
 
         return {
           id: record.id,
           display,
+          dropdownLabel,
+          personName,
+          familyName,
           phoneNumber,
           phoneE164,
           rawPhone,
           phoneType,
-          familyIds,
-          personIds,
+          familyIds: familyRecordIds.join(', '),
+          personIds: personRecordIds.join(', '),
           smsAllowed: Boolean(record.get('SMS Allowed')),
           voiceAllowed: Boolean(record.get('Voice Allowed')),
           doNotContact: Boolean(record.get('Do Not Contact')),
