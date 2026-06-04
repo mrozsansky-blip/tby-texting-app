@@ -12,7 +12,7 @@ type Recipient = {
   checked: boolean;
 };
 
-type BroadcastStatus = 'All' | 'Drafts' | 'Scheduled' | 'Past';
+type BroadcastStatus = 'New Broadcast' | 'Drafts' | 'Scheduled' | 'Past';
 
 const initialRecipients: Recipient[] = [
   { id: '1', family: 'Sample Family A', person: 'Parent A', type: 'Mother cell', phone: '***1234', checked: true },
@@ -34,7 +34,7 @@ export function BroadcastsShell() {
   const [sendMother, setSendMother] = useState(true);
   const [sendFather, setSendFather] = useState(true);
   const [recipients, setRecipients] = useState(initialRecipients);
-  const [activeTab, setActiveTab] = useState<BroadcastStatus>('All');
+  const [activeTab, setActiveTab] = useState<BroadcastStatus>('New Broadcast');
   const [broadcastSearch, setBroadcastSearch] = useState('');
   const [audienceSearch, setAudienceSearch] = useState('');
   const [visualStatus, setVisualStatus] = useState('Ready to create a visual broadcast workflow. No SMS will be sent.');
@@ -46,7 +46,7 @@ export function BroadcastsShell() {
   const characterCount = message.length;
   const smsParts = Math.max(1, Math.ceil(characterCount / 160));
   const displayedRows = broadcastRows.filter((row) => {
-    const matchesTab = activeTab === 'All' || row.tab === activeTab;
+    const matchesTab = row.tab === activeTab;
     const searchText = [row.title, row.status, row.audience, row.time].join(' ').toLowerCase();
     return matchesTab && searchText.includes(broadcastSearch.toLowerCase());
   });
@@ -78,6 +78,7 @@ export function BroadcastsShell() {
     setSendFather(true);
     setRecipients(initialRecipients);
     setShowSchedulePanel(false);
+    setActiveTab('New Broadcast');
     setVisualStatus('New visual broadcast started. Choose an audience, write a message, then preview recipients.');
   }
 
@@ -111,7 +112,7 @@ export function BroadcastsShell() {
       return;
     }
     setShowSchedulePanel(false);
-    setVisualStatus(`Broadcast scheduled visually for ${scheduledDate} at ${scheduledTime}. Provider not connected, so no SMS will send yet.`);
+    setVisualStatus(`Broadcast scheduled visually for ${scheduledDate} at ${scheduledTime}. Status: not sent — provider not connected.`);
   }
 
   function sendNow() {
@@ -123,7 +124,7 @@ export function BroadcastsShell() {
       setVisualStatus('No recipients selected. Check at least one recipient before sending.');
       return;
     }
-    setVisualStatus(`Broadcast processed visually for ${selectedCount} selected recipients. Status: not sent - provider not connected.`);
+    setVisualStatus(`Broadcast processed visually for ${selectedCount} selected recipients. Status: not sent — provider not connected.`);
   }
 
   return (
@@ -134,10 +135,10 @@ export function BroadcastsShell() {
             <h1 className="inbox-title">Broadcasts</h1>
             <p className="helper-text">Drafts, scheduled, and past mass texts.</p>
           </div>
-          <button className="btn btn-primary" onClick={startNewBroadcast}><Megaphone size={16} /> New</button>
+          <button className="btn btn-primary" onClick={startNewBroadcast}><Megaphone size={16} /> New Broadcast</button>
         </div>
         <div className="broadcast-tabs">
-          {(['All', 'Drafts', 'Scheduled', 'Past'] as BroadcastStatus[]).map((tab) => (
+          {(['New Broadcast', 'Drafts', 'Scheduled', 'Past'] as BroadcastStatus[]).map((tab) => (
             <button className={`tag tab-button ${activeTab === tab ? 'active-tab' : ''}`} key={tab} onClick={() => setActiveTab(tab)}>{tab}</button>
           ))}
         </div>
@@ -159,7 +160,8 @@ export function BroadcastsShell() {
               </div>
             </button>
           ))}
-          {displayedRows.length === 0 ? <p className="helper-text">No visual broadcasts match this filter.</p> : null}
+          {activeTab === 'New Broadcast' ? <p className="helper-text">Use the workspace to prepare a new mass text. Nothing will be sent.</p> : null}
+          {activeTab !== 'New Broadcast' && displayedRows.length === 0 ? <p className="helper-text">No visual broadcasts match this filter.</p> : null}
         </div>
       </aside>
 
@@ -201,8 +203,8 @@ export function BroadcastsShell() {
           <section className="broadcast-step-card">
             <StepTitle number="2" title="Choose SMS recipients" />
             <div className="choice-row">
-              <label className="choice-pill"><input type="checkbox" checked={sendMother} onChange={(event) => { setSendMother(event.target.checked); setVisualStatus('Mother cell option updated.'); }} /> Mother cell</label>
-              <label className="choice-pill"><input type="checkbox" checked={sendFather} onChange={(event) => { setSendFather(event.target.checked); setVisualStatus('Father cell option updated.'); }} /> Father cell</label>
+              <label className="choice-pill"><input type="checkbox" checked={sendMother} onChange={(event) => { setSendMother(event.target.checked); setRecipients((current) => current.map((recipient) => recipient.type === 'Mother cell' ? { ...recipient, checked: event.target.checked } : recipient)); setVisualStatus('Mother cell option updated.'); }} /> Mother cell</label>
+              <label className="choice-pill"><input type="checkbox" checked={sendFather} onChange={(event) => { setSendFather(event.target.checked); setRecipients((current) => current.map((recipient) => recipient.type === 'Father cell' ? { ...recipient, checked: event.target.checked } : recipient)); setVisualStatus('Father cell option updated.'); }} /> Father cell</label>
             </div>
             <p className="helper-text">Home phones are voice-only and are not used for SMS.</p>
           </section>
@@ -259,7 +261,7 @@ export function BroadcastsShell() {
                 <button className="btn btn-primary" onClick={saveSchedule}>Save Schedule</button>
               </div>
             ) : null}
-            <p className="helper-text">Until TextGrid is connected, Send Now will visually process the broadcast but mark recipients as not sent.</p>
+            <p className="helper-text">TextGrid is not connected. Send Now visually processes only and reports: not sent — provider not connected.</p>
           </section>
         </div>
       </section>

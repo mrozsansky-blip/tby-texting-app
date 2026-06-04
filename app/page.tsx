@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Megaphone, MessageSquare } from 'lucide-react';
+import { AppNav } from '@/components/AppNav';
 
 const cards = [
   { title: 'Inbox', body: 'One-on-one parent texting with family context.', href: '/inbox', icon: MessageSquare },
@@ -9,13 +10,7 @@ const cards = [
 export default function Home() {
   return (
     <main className="page-shell">
-      <nav className="topbar">
-        <div className="brand"><div className="logo-mark">T</div><span>TBY Texting</span></div>
-        <div className="nav-pills">
-          <Link className="nav-pill primary" href="/inbox">Inbox</Link>
-          <Link className="nav-pill" href="/broadcasts">Broadcasts</Link>
-        </div>
-      </nav>
+      <AppNav />
 
       <section className="hero-card">
         <p className="eyebrow">{process.env.NEXT_PUBLIC_SCHOOL_NAME || 'School'} communication center</p>

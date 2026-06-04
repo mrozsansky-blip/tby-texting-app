@@ -19,7 +19,6 @@ type Conversation = {
     body: string;
     time: string;
     status?: string;
-    relatedBroadcast?: string;
   }>;
   familyInfo: {
     smsStatus: string;
@@ -42,8 +41,8 @@ const conversations: Conversation[] = [
     unread: true,
     needsReply: true,
     messages: [
-      { id: '1', direction: 'outbound', body: 'Reminder from school: forms are due tomorrow.', time: '10:32 AM', status: 'Processed - provider not connected', relatedBroadcast: 'Forms Reminder' },
-      { id: '2', direction: 'inbound', body: 'Thank you, we sent it in.', time: '2:14 PM', relatedBroadcast: 'Forms Reminder' }
+      { id: '1', direction: 'outbound', body: 'Reminder from school: forms are due tomorrow.', time: '10:32 AM', status: 'Processed - provider not connected' },
+      { id: '2', direction: 'inbound', body: 'Thank you, we sent it in.', time: '2:14 PM' }
     ],
     familyInfo: {
       smsStatus: 'SMS allowed',
@@ -62,7 +61,7 @@ const conversations: Conversation[] = [
     lastText: 'You: Bus 4 is running about 10 minutes late.',
     lastTime: 'Yesterday',
     messages: [
-      { id: '1', direction: 'outbound', body: 'Bus 4 is running about 10 minutes late today.', time: 'Yesterday 3:20 PM', status: 'Processed - provider not connected', relatedBroadcast: 'Bus 4 Delay' }
+      { id: '1', direction: 'outbound', body: 'Bus 4 is running about 10 minutes late today.', time: 'Yesterday 3:20 PM', status: 'Processed - provider not connected' }
     ],
     familyInfo: {
       smsStatus: 'SMS allowed',
@@ -98,6 +97,8 @@ export function ConversationShell() {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(conversations[0].id);
   const [reply, setReply] = useState('');
+  const [visualReplies, setVisualReplies] = useState<Record<string, Conversation['messages']>>({});
+  const [replyStatus, setReplyStatus] = useState('TextGrid is not connected. Inbox replies are visual only.');
   const selected = conversations.find((conversation) => conversation.id === selectedId) || conversations[0];
   const filteredConversations = conversations.filter((conversation) => {
     const text = [conversation.familyName, conversation.personName, conversation.phoneType, conversation.phoneMasked, conversation.lastText].join(' ').toLowerCase();
@@ -105,8 +106,26 @@ export function ConversationShell() {
   });
 
   function sendVisualReply() {
-    if (!reply.trim()) return;
+    const body = reply.trim();
+    if (!body) {
+      setReplyStatus('Type a one-on-one reply before processing.');
+      return;
+    }
+
+    const visualMessage: Conversation['messages'][number] = {
+      id: `visual-${selected.id}-${Date.now()}`,
+      direction: 'outbound',
+      body,
+      time: 'Just now',
+      status: 'not sent — provider not connected'
+    };
+
+    setVisualReplies((current) => ({
+      ...current,
+      [selected.id]: [...(current[selected.id] || []), visualMessage]
+    }));
     setReply('');
+    setReplyStatus('Reply processed visually: not sent — provider not connected.');
   }
 
   return (
@@ -123,7 +142,7 @@ export function ConversationShell() {
               placeholder="Search texts, names, numbers..."
             />
           </div>
-          <button className="btn btn-primary inbox-new-button">+ New text</button>
+          <div className="scope-note">One-on-one texting only. No AI and no broadcasts in Inbox.</div>
         </div>
 
         <div className="thread-list">
@@ -158,10 +177,9 @@ export function ConversationShell() {
         </header>
 
         <div className="chat-scroll">
-          {selected.messages.map((message) => (
+          {[...selected.messages, ...(visualReplies[selected.id] || [])].map((message) => (
             <div className={`bubble ${message.direction === 'outbound' ? 'office' : 'parent'}`} key={message.id}>
               <p style={{ margin: 0 }}>{message.body}</p>
-              {message.relatedBroadcast ? <p className="bubble-note">Related: {message.relatedBroadcast}</p> : null}
               <p className="bubble-time">{message.time}{message.status ? ` - ${message.status}` : ''}</p>
             </div>
           ))}
@@ -175,7 +193,7 @@ export function ConversationShell() {
             placeholder={`Text ${selected.personName}...`}
           />
           <div className="compose-row">
-            <p className="helper-text">Provider not connected: messages can appear as processed/not sent during setup.</p>
+            <p className="helper-text">{replyStatus}</p>
             <button className="btn btn-primary" onClick={sendVisualReply}><Send size={16} /> Send</button>
           </div>
         </div>
