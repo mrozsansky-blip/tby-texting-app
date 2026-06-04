@@ -1,11 +1,9 @@
 import Link from 'next/link';
-import { MessageSquare, Users, ShieldCheck, Sparkles } from 'lucide-react';
+import { Megaphone, MessageSquare } from 'lucide-react';
 
 const cards = [
-  { title: 'Texting Inbox', body: 'Family conversations with school context.', href: '/inbox', icon: MessageSquare },
-  { title: 'Groups', body: 'Bussing, class, grade, and smart groups.', href: '/groups', icon: Users },
-  { title: 'Safe Sends', body: 'Preview recipients, deduplicate, then confirm.', href: '/inbox', icon: ShieldCheck },
-  { title: 'AI Assistant', body: 'Compose messages and suggest recipient groups.', href: '/inbox', icon: Sparkles }
+  { title: 'Inbox', body: 'One-on-one parent texting with family context.', href: '/inbox', icon: MessageSquare },
+  { title: 'Broadcasts', body: 'Create, preview, schedule, and process mass texts.', href: '/broadcasts', icon: Megaphone }
 ];
 
 export default function Home() {
@@ -15,23 +13,23 @@ export default function Home() {
         <div className="brand"><div className="logo-mark">T</div><span>TBY Texting</span></div>
         <div className="nav-pills">
           <Link className="nav-pill primary" href="/inbox">Inbox</Link>
-          <Link className="nav-pill" href="/groups">Groups</Link>
+          <Link className="nav-pill" href="/broadcasts">Broadcasts</Link>
         </div>
       </nav>
 
       <section className="hero-card">
         <p className="eyebrow">{process.env.NEXT_PUBLIC_SCHOOL_NAME || 'School'} communication center</p>
-        <h1 className="hero-title">A calm, safe texting command center for the school office.</h1>
+        <h1 className="hero-title">A simple texting system for one-on-one replies and school broadcasts.</h1>
         <p className="hero-copy">
-          Staff can choose families or smart groups, let AI draft the message, review every recipient, and confirm before anything sends through Textgrid.
+          Inbox is for individual parent conversations. Broadcasts is for mass texts with audience selection, recipient preview, scheduling, and safe processing.
         </p>
         <div className="hero-actions">
-          <Link className="btn btn-primary" href="/inbox"><MessageSquare size={18} /> Open texting inbox</Link>
-          <Link className="btn btn-secondary" href="/groups"><Users size={18} /> View groups</Link>
+          <Link className="btn btn-primary" href="/inbox"><MessageSquare size={18} /> Open inbox</Link>
+          <Link className="btn btn-secondary" href="/broadcasts"><Megaphone size={18} /> Open broadcasts</Link>
         </div>
       </section>
 
-      <section className="feature-grid">
+      <section className="feature-grid simple-feature-grid">
         {cards.map((card) => {
           const Icon = card.icon;
           return (
