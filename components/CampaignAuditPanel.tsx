@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { RotateCcw, Search } from 'lucide-react';
+import { Play, RotateCcw, Search } from 'lucide-react';
 
-type RecipientStatus = 'delivered' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'undelivered' | 'queued' | 'pending' | 'sent' | 'not_attempted' | 'other';
+type RecipientStatus = 'delivered' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'undelivered' | 'queued' | 'pending' | 'sent' | 'ready_to_send' | 'not_attempted' | 'other';
 
 type Recipient = {
   id: string;
@@ -38,7 +38,7 @@ type Audit = {
 
 const filters = [
   ['all', 'All statuses'],
-  ['sent', 'Sent'],
+  ['sent', 'Reached TextGrid / Sent'],
   ['delivered', 'Delivered'],
   ['queued', 'Queued / pending'],
   ['failed', 'Failed'],
@@ -47,6 +47,17 @@ const filters = [
   ['undelivered', 'Undelivered'],
   ['not_attempted', 'Not attempted']
 ] as const;
+
+
+const terminalOrAttemptedStatuses = new Set<RecipientStatus>(['sent', 'delivered', 'queued', 'pending', 'failed', 'failed_fetch', 'textgrid_http_400', 'undelivered']);
+const terminalOrAttemptedStatusText = /\b(sent|delivered|queued|pending|failed|failed fetch|undelivered)\b|http\s*400/i;
+
+function isNeverAttemptedSendable(recipient: Recipient) {
+  if (terminalOrAttemptedStatuses.has(recipient.normalizedStatus)) return false;
+  if (recipient.providerMessageId || recipient.providerStatus || recipient.lastAttemptAt) return false;
+  if (terminalOrAttemptedStatusText.test(recipient.status)) return false;
+  return recipient.normalizedStatus === 'not_attempted' || recipient.normalizedStatus === 'ready_to_send';
+}
 
 function maskPhone(phone: string) {
   return phone.length > 4 ? `***${phone.slice(-4)}` : phone;
@@ -62,6 +73,7 @@ export function CampaignAuditPanel({ campaignId }: { campaignId: string }) {
   const [search, setSearch] = useState('');
   const [banner, setBanner] = useState('Loading campaign status audit...');
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isSendingNotAttempted, setIsSendingNotAttempted] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string>('Never');
 
   async function loadAudit() {
@@ -78,14 +90,14 @@ export function CampaignAuditPanel({ campaignId }: { campaignId: string }) {
   }, [campaignId]);
 
   useEffect(() => {
-    if (isRetrying) return;
+    if (isRetrying || isSendingNotAttempted) return;
     const hasActiveRows = Boolean(audit && audit.counts.queuedPending > 0);
     const intervalMs = hasActiveRows ? 10000 : 30000;
     const timer = window.setTimeout(() => {
       void loadAudit().catch((error) => setBanner(`Could not refresh campaign audit: ${error instanceof Error ? error.message : 'Unknown error'}`));
     }, intervalMs);
     return () => window.clearTimeout(timer);
-  }, [audit?.counts.queuedPending, campaignId, isRetrying]);
+  }, [audit?.counts.queuedPending, campaignId, isRetrying, isSendingNotAttempted]);
 
   const filteredRecipients = useMemo(() => {
     if (!audit) return [];
@@ -98,6 +110,26 @@ export function CampaignAuditPanel({ campaignId }: { campaignId: string }) {
       return matchesStatus && matchesSearch;
     });
   }, [audit, search, statusFilter]);
+
+  const sendableNotAttemptedCount = useMemo(() => audit ? audit.recipients.filter(isNeverAttemptedSendable).length : 0, [audit]);
+
+  async function sendNotAttemptedOnly() {
+    if (!audit || sendableNotAttemptedCount === 0) return;
+    if (!window.confirm(`Send ${sendableNotAttemptedCount} never-attempted recipients only? Queued, pending, sent, delivered, and failed rows will be skipped.`)) return;
+    setIsSendingNotAttempted(true);
+    setBanner(`Sending ${sendableNotAttemptedCount} never-attempted recipients only at concurrency 5. Attempted and terminal rows are skipped.`);
+    try {
+      const response = await fetch(`/api/broadcasts/${campaignId}/send`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.details || data.error || 'Send failed.');
+      setBanner(`Send complete: ${data.attempted} never-attempted rows processed; ${data.skippedAttemptedOrTerminalRows} attempted or terminal rows skipped.`);
+      await loadAudit();
+    } catch (error) {
+      setBanner(`Send failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsSendingNotAttempted(false);
+    }
+  }
 
   async function retryFailedOnly() {
     if (!audit || audit.counts.failed === 0) return;
@@ -124,9 +156,14 @@ export function CampaignAuditPanel({ campaignId }: { campaignId: string }) {
           <h1 className="chat-title">{audit?.campaign.name || 'Campaign status audit'}</h1>
           <p className="chat-subtitle">Recipient-level TextGrid audit and failed-only retry workflow.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => void retryFailedOnly()} disabled={!audit || audit.counts.failed === 0 || isRetrying}>
-          <RotateCcw size={16} /> {isRetrying ? 'Retrying failed...' : 'Retry failed only'}
-        </button>
+        <div className="broadcast-actions">
+          <button className="btn btn-secondary" onClick={() => void sendNotAttemptedOnly()} disabled={!audit || sendableNotAttemptedCount === 0 || isRetrying || isSendingNotAttempted}>
+            <Play size={16} /> {isSendingNotAttempted ? 'Sending...' : 'Send not attempted only'}
+          </button>
+          <button className="btn btn-primary" onClick={() => void retryFailedOnly()} disabled={!audit || audit.counts.failed === 0 || isRetrying || isSendingNotAttempted}>
+            <RotateCcw size={16} /> {isRetrying ? 'Retrying failed...' : 'Retry failed only'}
+          </button>
+        </div>
       </header>
       <div className="broadcast-scroll">
         <div className="broadcast-status-banner">{banner} Last updated: {lastUpdated}.</div>
@@ -179,11 +216,12 @@ function BroadcastProgress({ audit }: { audit: Audit | null }) {
       <div className="thread-row">
         <div>
           <p className="card-title">Broadcast progress</p>
-          <p className="helper-text">{reached} of {total} have reached TextGrid</p>
+          <p className="helper-text">{reached} of {total} accepted by TextGrid</p>
         </div>
         <strong>{percent}%</strong>
       </div>
       <div className="audit-progress-track"><div className="audit-progress-fill" style={{ width: `${percent}%` }} /></div>
+      <p className="helper-text">Reached TextGrid = accepted by TextGrid · Queued / pending = accepted by TextGrid but not final · Delivered = final delivered · Failed = failed/undelivered/http errors · Not attempted = never tried</p>
       <p className="helper-text">{audit?.counts.delivered || 0} delivered · {audit?.counts.queuedPending || 0} queued/pending · {audit?.counts.failed || 0} failed · {audit?.counts.notAttempted || 0} not attempted</p>
     </section>
   );

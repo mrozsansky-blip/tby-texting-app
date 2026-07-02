@@ -832,7 +832,7 @@ export async function logInboundMessage(input: { from: string; body: string; pro
   return record.id;
 }
 
-export type CampaignRecipientStatus = 'delivered' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'undelivered' | 'queued' | 'pending' | 'sent' | 'not_attempted' | 'other';
+export type CampaignRecipientStatus = 'delivered' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'undelivered' | 'queued' | 'pending' | 'sent' | 'ready_to_send' | 'not_attempted' | 'other';
 
 export type CampaignQueueRecipient = {
   id: string;
@@ -895,6 +895,7 @@ function normalizeCampaignRecipientStatus(status: string, errorMessage = '', pro
   if (/\b(queue|queued|pending|sending)\b/.test(providerText)) return providerText.includes('pending') ? 'pending' : 'queued';
   if (/\bsent\b|reached textgrid|reached provider/.test(providerText)) return 'sent';
   if (/\bsent\b/.test(appText)) return 'sent';
+  if (/ready to send|ready_to_send/.test(appText)) return 'ready_to_send';
   if (!appText || /\b(draft|preview|not attempted|new)\b/.test(appText)) return 'not_attempted';
   if (/\b(queue|queued|pending|sending)\b/.test(appText)) return appText.includes('pending') ? 'pending' : 'queued';
   return 'other';
@@ -929,7 +930,9 @@ export async function getCampaignAudit(campaignId: string): Promise<CampaignAudi
     .map((record) => queueRecipientFromRecord(record, campaignBody));
 
   const counts = recipients.reduce<CampaignAudit['counts']>((acc, recipient) => {
-    const reachedTextgrid = Boolean(recipient.providerStatus || recipient.providerMessageId) || recipient.normalizedStatus === 'sent';
+    const providerText = normalizeGroupText(recipient.providerStatus);
+    const providerStatusReachedTextgrid = /^(sent|queued|pending|delivered|undelivered|failed)$/.test(providerText);
+    const reachedTextgrid = Boolean(recipient.providerMessageId) || providerStatusReachedTextgrid;
     acc.totalRecipients += 1;
     if (recipient.normalizedStatus === 'sent') acc.sent += 1;
     if (recipient.normalizedStatus === 'delivered') acc.delivered += 1;
@@ -939,7 +942,7 @@ export async function getCampaignAudit(campaignId: string): Promise<CampaignAudi
     if (recipient.normalizedStatus === 'textgrid_http_400') acc.textgridHttp400Failures += 1;
     if (recipient.normalizedStatus === 'undelivered') acc.undelivered += 1;
     if (reachedTextgrid) acc.reachedTextgrid += 1;
-    if (recipient.normalizedStatus === 'not_attempted' || (!reachedTextgrid && recipient.normalizedStatus === 'other')) acc.notAttempted += 1;
+    if (recipient.normalizedStatus === 'not_attempted' || recipient.normalizedStatus === 'ready_to_send' || (!reachedTextgrid && recipient.normalizedStatus === 'other')) acc.notAttempted += 1;
     return acc;
   }, { totalRecipients: 0, sent: 0, delivered: 0, queuedPending: 0, failed: 0, failedFetch: 0, textgridHttp400Failures: 0, undelivered: 0, reachedTextgrid: 0, notAttempted: 0 });
 
