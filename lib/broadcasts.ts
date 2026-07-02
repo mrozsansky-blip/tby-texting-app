@@ -1,6 +1,3 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-
 export type CampaignRecipientStatus = 'delivered' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'undelivered' | 'queued' | 'pending' | 'sent' | 'ready_to_send' | 'not_attempted' | 'other';
 
 export type BroadcastRecipientInput = {
@@ -12,6 +9,7 @@ export type BroadcastRecipientInput = {
 
 export type BroadcastRecipient = {
   id: string;
+  campaignId: string;
   familyName: string;
   to: string;
   body: string;
@@ -22,6 +20,8 @@ export type BroadcastRecipient = {
   errorMessage: string;
   rawProviderError: string;
   lastAttemptAt: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type BroadcastCampaign = {
@@ -31,7 +31,6 @@ export type BroadcastCampaign = {
   status: string;
   createdAt: string;
   updatedAt: string;
-  recipients: BroadcastRecipient[];
 };
 
 export type CampaignAudit = {
@@ -51,12 +50,68 @@ export type CampaignAudit = {
   recipients: BroadcastRecipient[];
 };
 
-type BroadcastStore = { campaigns: BroadcastCampaign[] };
+type RedisResult<T> = { result?: T; error?: string };
+type PipelineResult<T> = Array<{ result?: T; error?: string }>;
 
-const storePath = path.join(process.cwd(), '.data', 'broadcasts.json');
+const keyPrefix = process.env.BROADCAST_STORAGE_PREFIX || 'tby:broadcasts';
 
 function normalizeText(value: string) {
   return value.toLowerCase().replace(/[_-]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function kvConfig() {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) {
+    throw new Error('Persistent broadcast storage is not configured. Set KV_REST_API_URL and KV_REST_API_TOKEN (or Upstash Redis REST equivalents).');
+  }
+  return { url: url.replace(/\/$/, ''), token };
+}
+
+async function kvCommand<T>(command: unknown[]): Promise<T> {
+  const { url, token } = kvConfig();
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(command)
+  });
+  const payload = await response.json().catch(() => ({})) as RedisResult<T>;
+  if (!response.ok || payload.error) throw new Error(payload.error || `Persistent broadcast storage failed with HTTP ${response.status}.`);
+  return payload.result as T;
+}
+
+async function kvPipeline<T>(commands: unknown[][]): Promise<PipelineResult<T>> {
+  const { url, token } = kvConfig();
+  const response = await fetch(`${url}/pipeline`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(commands)
+  });
+  const payload = await response.json().catch(() => []) as PipelineResult<T> | RedisResult<PipelineResult<T>>;
+  if (!response.ok) throw new Error(`Persistent broadcast storage pipeline failed with HTTP ${response.status}.`);
+  const results = Array.isArray(payload) ? payload : payload.result;
+  if (!results) throw new Error('Persistent broadcast storage pipeline returned no results.');
+  const failed = results.find((item) => item.error);
+  if (failed?.error) throw new Error(failed.error);
+  return results;
+}
+
+function campaignKey(campaignId: string) {
+  return `${keyPrefix}:campaign:${campaignId}`;
+}
+
+function campaignRecipientsKey(campaignId: string) {
+  return `${keyPrefix}:campaign:${campaignId}:recipients`;
+}
+
+function recipientKey(campaignId: string, recipientId: string) {
+  return `${keyPrefix}:campaign:${campaignId}:recipient:${recipientId}`;
+}
+
+function parseJson<T>(value: unknown, fallback: T): T {
+  if (!value) return fallback;
+  if (typeof value === 'string') return JSON.parse(value) as T;
+  return value as T;
 }
 
 export function normalizeCampaignRecipientStatus(status: string, errorMessage = '', providerStatus = ''): CampaignRecipientStatus {
@@ -79,22 +134,6 @@ export function normalizeCampaignRecipientStatus(status: string, errorMessage = 
   return 'other';
 }
 
-async function readStore(): Promise<BroadcastStore> {
-  try {
-    const text = await readFile(storePath, 'utf8');
-    const parsed = JSON.parse(text) as BroadcastStore;
-    return { campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns : [] };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { campaigns: [] };
-    throw error;
-  }
-}
-
-async function writeStore(store: BroadcastStore) {
-  await mkdir(path.dirname(storePath), { recursive: true });
-  await writeFile(storePath, JSON.stringify(store, null, 2));
-}
-
 function createId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -107,37 +146,54 @@ export async function createBroadcastCampaign(input: { name: string; body: strin
     body: input.body,
     status: input.status || 'Ready to send',
     createdAt: now,
-    updatedAt: now,
-    recipients: input.recipients.map((recipient) => ({
-      id: createId('br'),
-      familyName: [recipient.familyName, recipient.personName].filter(Boolean).join(' - ') || 'Recipient',
-      to: recipient.phoneE164,
-      body: recipient.body || input.body,
-      status: 'Not attempted',
-      normalizedStatus: 'not_attempted',
-      providerMessageId: '',
-      providerStatus: '',
-      errorMessage: '',
-      rawProviderError: '',
-      lastAttemptAt: ''
-    }))
+    updatedAt: now
   };
-  const store = await readStore();
-  store.campaigns.unshift(campaign);
-  await writeStore(store);
-  return campaign;
+  const recipients: BroadcastRecipient[] = input.recipients.map((recipient) => ({
+    id: createId('br'),
+    campaignId: campaign.id,
+    familyName: [recipient.familyName, recipient.personName].filter(Boolean).join(' - ') || 'Recipient',
+    to: recipient.phoneE164,
+    body: recipient.body || input.body,
+    status: 'Not attempted',
+    normalizedStatus: 'not_attempted',
+    providerMessageId: '',
+    providerStatus: '',
+    errorMessage: '',
+    rawProviderError: '',
+    lastAttemptAt: '',
+    createdAt: now,
+    updatedAt: now
+  }));
+
+  await kvPipeline([
+    ['SET', campaignKey(campaign.id), JSON.stringify(campaign)],
+    ['DEL', campaignRecipientsKey(campaign.id)],
+    ...(recipients.length > 0 ? [['RPUSH', campaignRecipientsKey(campaign.id), ...recipients.map((recipient) => recipient.id)]] : []),
+    ...recipients.map((recipient) => ['SET', recipientKey(campaign.id, recipient.id), JSON.stringify(recipient)])
+  ]);
+
+  return { ...campaign, recipients };
 }
 
 export async function getBroadcastCampaign(campaignId: string) {
-  const store = await readStore();
-  return store.campaigns.find((campaign) => campaign.id === campaignId) || null;
+  const campaign = parseJson<BroadcastCampaign | null>(await kvCommand<string | null>(['GET', campaignKey(campaignId)]), null);
+  return campaign;
 }
 
-function buildAudit(campaign: BroadcastCampaign): CampaignAudit {
-  const recipients = campaign.recipients.map((recipient) => ({
-    ...recipient,
-    normalizedStatus: normalizeCampaignRecipientStatus(recipient.status, recipient.errorMessage, recipient.providerStatus)
-  }));
+async function getBroadcastRecipients(campaignId: string) {
+  const ids = await kvCommand<string[]>(['LRANGE', campaignRecipientsKey(campaignId), 0, -1]);
+  if (!ids.length) return [];
+  const rows = await kvPipeline<string | null>(ids.map((id) => ['GET', recipientKey(campaignId, id)]));
+  return rows
+    .map((row) => parseJson<BroadcastRecipient | null>(row.result, null))
+    .filter((recipient): recipient is BroadcastRecipient => Boolean(recipient))
+    .map((recipient) => ({
+      ...recipient,
+      normalizedStatus: normalizeCampaignRecipientStatus(recipient.status, recipient.errorMessage, recipient.providerStatus)
+    }));
+}
+
+function buildAudit(campaign: BroadcastCampaign, recipients: BroadcastRecipient[]): CampaignAudit {
   const counts = recipients.reduce<CampaignAudit['counts']>((acc, recipient) => {
     const providerText = normalizeText(recipient.providerStatus);
     const providerStatusReachedTextgrid = /^(sent|queued|pending|delivered|undelivered|failed)$/.test(providerText);
@@ -161,7 +217,8 @@ function buildAudit(campaign: BroadcastCampaign): CampaignAudit {
 export async function getCampaignAudit(campaignId: string) {
   const campaign = await getBroadcastCampaign(campaignId);
   if (!campaign) throw new Error('Broadcast campaign not found.');
-  return buildAudit(campaign);
+  const recipients = await getBroadcastRecipients(campaignId);
+  return buildAudit(campaign, recipients);
 }
 
 export async function updateCampaignRecipientAttempt(campaignId: string, recipientId: string, input: {
@@ -171,18 +228,20 @@ export async function updateCampaignRecipientAttempt(campaignId: string, recipie
   errorMessage?: string;
   rawProviderError?: string;
 }) {
-  const store = await readStore();
-  const campaign = store.campaigns.find((item) => item.id === campaignId);
-  if (!campaign) throw new Error('Broadcast campaign not found.');
-  const recipient = campaign.recipients.find((item) => item.id === recipientId);
-  if (!recipient) throw new Error('Broadcast recipient not found.');
-  recipient.status = input.status;
-  recipient.providerMessageId = input.providerMessageId || '';
-  recipient.providerStatus = input.providerStatus || '';
-  recipient.errorMessage = input.errorMessage || '';
-  recipient.rawProviderError = input.rawProviderError || '';
-  recipient.lastAttemptAt = new Date().toISOString();
-  recipient.normalizedStatus = normalizeCampaignRecipientStatus(recipient.status, recipient.errorMessage, recipient.providerStatus);
-  campaign.updatedAt = new Date().toISOString();
-  await writeStore(store);
+  const existing = parseJson<BroadcastRecipient | null>(await kvCommand<string | null>(['GET', recipientKey(campaignId, recipientId)]), null);
+  if (!existing) throw new Error('Broadcast recipient not found.');
+
+  const updated: BroadcastRecipient = {
+    ...existing,
+    status: input.status,
+    providerMessageId: input.providerMessageId || '',
+    providerStatus: input.providerStatus || '',
+    errorMessage: input.errorMessage || '',
+    rawProviderError: input.rawProviderError || '',
+    lastAttemptAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  updated.normalizedStatus = normalizeCampaignRecipientStatus(updated.status, updated.errorMessage, updated.providerStatus);
+
+  await kvCommand(['SET', recipientKey(campaignId, recipientId), JSON.stringify(updated)]);
 }
