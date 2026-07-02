@@ -831,3 +831,150 @@ export async function logInboundMessage(input: { from: string; body: string; pro
   ]);
   return record.id;
 }
+
+export type CampaignRecipientStatus = 'delivered' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'undelivered' | 'queued' | 'pending' | 'sent' | 'ready_to_send' | 'not_attempted' | 'other';
+
+export type CampaignQueueRecipient = {
+  id: string;
+  familyName: string;
+  to: string;
+  body: string;
+  status: string;
+  normalizedStatus: CampaignRecipientStatus;
+  providerMessageId: string;
+  providerStatus: string;
+  errorMessage: string;
+  rawProviderError: string;
+  lastAttemptAt: string;
+};
+
+export type CampaignAudit = {
+  campaign: { id: string; name: string; body: string; status: string };
+  counts: {
+    totalRecipients: number;
+    sent: number;
+    delivered: number;
+    queuedPending: number;
+    failed: number;
+    failedFetch: number;
+    textgridHttp400Failures: number;
+    undelivered: number;
+    reachedTextgrid: number;
+    notAttempted: number;
+  };
+  recipients: CampaignQueueRecipient[];
+};
+
+const MESSAGE_CAMPAIGNS_TABLE = process.env.AIRTABLE_MESSAGES_TABLE || 'Message Campaigns';
+const MESSAGE_QUEUE_TABLE = process.env.AIRTABLE_MESSAGE_QUEUE_TABLE || 'Message Queue';
+
+function linkedIdsFromAny(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    if (typeof item === 'string') return item;
+    if (item && typeof item === 'object' && 'id' in item) return String((item as { id: unknown }).id);
+    return String(item || '');
+  }).filter(Boolean);
+}
+
+function fieldText(record: AirtableRecord, names: string[]) {
+  return firstText(record, names);
+}
+
+function normalizeCampaignRecipientStatus(status: string, errorMessage = '', providerStatus = ''): CampaignRecipientStatus {
+  const providerText = normalizeGroupText(providerStatus);
+  const appText = normalizeGroupText(status);
+  const errorText = normalizeGroupText(errorMessage);
+  const combinedErrorText = normalizeGroupText(`${providerStatus} ${errorMessage}`);
+
+  if (providerText === 'delivered' || /\bdelivered\b/.test(providerText)) return 'delivered';
+  if (/failed fetch/.test(combinedErrorText)) return 'failed_fetch';
+  if (/http\s*400|\b400\b|bad request/.test(combinedErrorText)) return 'textgrid_http_400';
+  if (/\bundelivered\b/.test(providerText)) return 'undelivered';
+  if (/\b(failed|failure|error)\b/.test(providerText) || /\b(failed|failure|error)\b/.test(errorText)) return 'failed';
+  if (/\b(queue|queued|pending|sending)\b/.test(providerText)) return providerText.includes('pending') ? 'pending' : 'queued';
+  if (/\bsent\b|reached textgrid|reached provider/.test(providerText)) return 'sent';
+  if (/\bsent\b/.test(appText)) return 'sent';
+  if (/ready to send|ready_to_send/.test(appText)) return 'ready_to_send';
+  if (!appText || /\b(draft|preview|not attempted|new)\b/.test(appText)) return 'not_attempted';
+  if (/\b(queue|queued|pending|sending)\b/.test(appText)) return appText.includes('pending') ? 'pending' : 'queued';
+  return 'other';
+}
+
+function queueRecipientFromRecord(record: AirtableRecord, fallbackBody: string): CampaignQueueRecipient {
+  const status = fieldText(record, ['Status']);
+  const errorMessage = fieldText(record, ['Error Message', 'Provider Error', 'Error', 'Last Error']);
+  const providerStatus = fieldText(record, ['Provider Status', 'TextGrid Status', 'Textgrid Status']);
+
+  return {
+    id: record.id,
+    familyName: fieldText(record, ['Family Name', 'Family', 'Recipient Name', 'Name']),
+    to: fieldText(record, ['To', 'Phone E164', 'Phone', 'Recipient Phone']),
+    body: fieldText(record, ['Body', 'Message Body']) || fallbackBody,
+    status,
+    normalizedStatus: normalizeCampaignRecipientStatus(status, errorMessage, providerStatus),
+    providerMessageId: fieldText(record, ['Provider Message ID', 'TextGrid Provider ID', 'TextGrid Message ID', 'provider_message_id']),
+    providerStatus,
+    errorMessage,
+    rawProviderError: fieldText(record, ['Raw Provider Error', 'Provider Raw Error', 'raw_provider_error']),
+    lastAttemptAt: fieldText(record, ['Last Attempt At', 'Last Attempt', 'last_attempt_at'])
+  };
+}
+
+export async function getCampaignAudit(campaignId: string): Promise<CampaignAudit> {
+  const campaignRecord = await base()(MESSAGE_CAMPAIGNS_TABLE).find(campaignId) as AirtableRecord;
+  const campaignBody = fieldText(campaignRecord, ['Message Body', 'Body']);
+  const queueRecords = await base()(MESSAGE_QUEUE_TABLE).select().all() as AirtableRecord[];
+  const recipients = queueRecords
+    .filter((record) => linkedIdsFromAny(record.get('Campaign')).includes(campaignId) || linkedIdsFromAny(record.get('Message Campaign')).includes(campaignId))
+    .map((record) => queueRecipientFromRecord(record, campaignBody));
+
+  const counts = recipients.reduce<CampaignAudit['counts']>((acc, recipient) => {
+    const providerText = normalizeGroupText(recipient.providerStatus);
+    const providerStatusReachedTextgrid = /^(sent|queued|pending|delivered|undelivered|failed)$/.test(providerText);
+    const reachedTextgrid = Boolean(recipient.providerMessageId) || providerStatusReachedTextgrid;
+    acc.totalRecipients += 1;
+    if (recipient.normalizedStatus === 'sent') acc.sent += 1;
+    if (recipient.normalizedStatus === 'delivered') acc.delivered += 1;
+    if (recipient.normalizedStatus === 'queued' || recipient.normalizedStatus === 'pending') acc.queuedPending += 1;
+    if (recipient.normalizedStatus === 'failed' || recipient.normalizedStatus === 'failed_fetch' || recipient.normalizedStatus === 'textgrid_http_400' || recipient.normalizedStatus === 'undelivered') acc.failed += 1;
+    if (recipient.normalizedStatus === 'failed_fetch') acc.failedFetch += 1;
+    if (recipient.normalizedStatus === 'textgrid_http_400') acc.textgridHttp400Failures += 1;
+    if (recipient.normalizedStatus === 'undelivered') acc.undelivered += 1;
+    if (reachedTextgrid) acc.reachedTextgrid += 1;
+    if (recipient.normalizedStatus === 'not_attempted' || recipient.normalizedStatus === 'ready_to_send' || (!reachedTextgrid && recipient.normalizedStatus === 'other')) acc.notAttempted += 1;
+    return acc;
+  }, { totalRecipients: 0, sent: 0, delivered: 0, queuedPending: 0, failed: 0, failedFetch: 0, textgridHttp400Failures: 0, undelivered: 0, reachedTextgrid: 0, notAttempted: 0 });
+
+  return {
+    campaign: {
+      id: campaignRecord.id,
+      name: fieldText(campaignRecord, ['Campaign Name', 'Name']) || campaignRecord.id,
+      body: campaignBody,
+      status: fieldText(campaignRecord, ['Status'])
+    },
+    counts,
+    recipients
+  };
+}
+
+async function updateQueueAttempt(recordId: string, fields: Partial<Airtable.FieldSet>) {
+  await base()(MESSAGE_QUEUE_TABLE).update(recordId, fields);
+}
+
+export async function updateCampaignRecipientAttempt(recordId: string, input: {
+  status: 'Sent' | 'Failed';
+  providerMessageId?: string;
+  providerStatus?: string;
+  errorMessage?: string;
+  rawProviderError?: string;
+}) {
+  await updateQueueAttempt(recordId, {
+    Status: input.status,
+    'Provider Message ID': input.providerMessageId || '',
+    'Provider Status': input.providerStatus || '',
+    'Error Message': input.errorMessage || '',
+    'Raw Provider Error': input.rawProviderError || '',
+    'Last Attempt At': new Date().toISOString()
+  });
+}
