@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCampaignAudit } from '@/lib/airtable';
+import { getCampaignAudit } from '@/lib/broadcasts';
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {

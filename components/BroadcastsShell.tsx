@@ -89,10 +89,10 @@ export function BroadcastsShell() {
   const [skipped, setSkipped] = useState<SkippedRecipient[]>([]);
   const [previewCounts, setPreviewCounts] = useState({ familiesFound: 0, phonesFound: 0, eligibleRecipients: 0, skipped: 0 });
   const [previewNotes, setPreviewNotes] = useState<string[]>([]);
-  const [previewLabel, setPreviewLabel] = useState('No Airtable preview loaded yet');
+  const [previewLabel, setPreviewLabel] = useState('No recipient preview loaded yet');
   const [activeTab, setActiveTab] = useState<BroadcastStatus>('New Broadcast');
   const [broadcastSearch, setBroadcastSearch] = useState('');
-  const [visualStatus, setVisualStatus] = useState('Ready. Choose an audience and preview Airtable recipients. No SMS will be sent.');
+  const [visualStatus, setVisualStatus] = useState('Ready. Choose an audience and preview recipients before sending.');
   const [showSchedulePanel, setShowSchedulePanel] = useState(false);
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('09:00');
@@ -121,7 +121,7 @@ export function BroadcastsShell() {
     setSkipped([]);
     setPreviewCounts({ familiesFound: 0, phonesFound: 0, eligibleRecipients: 0, skipped: 0 });
     setPreviewNotes([]);
-    setPreviewLabel('No Airtable preview loaded yet');
+    setPreviewLabel('No recipient preview loaded yet');
     setVisualStatus(status);
   }
 
@@ -151,13 +151,13 @@ export function BroadcastsShell() {
     setActiveTab('New Broadcast');
     setManualPhones([]);
     setManualSearchResults([]);
-    resetPreview('New visual broadcast started. Choose an Airtable audience and preview recipients.');
+    resetPreview('New broadcast started. Choose an audience and preview recipients.');
   }
 
   function chooseAudience(choice: AudienceType) {
     setAudienceType(choice);
     setAudienceValue('');
-    resetPreview(`${audienceLabels[choice]} selected. Preview recipients to load Airtable data.`);
+    resetPreview(`${audienceLabels[choice]} selected. Preview recipients to load contact data.`);
   }
 
   async function previewRecipients() {
@@ -172,12 +172,12 @@ export function BroadcastsShell() {
     }
 
     if (audienceType === 'manual_list' && manualPhones.length === 0) {
-      setVisualStatus('Search Airtable phone numbers and add at least one manual recipient before previewing.');
+      setVisualStatus('Search phone numbers and add at least one manual recipient before previewing.');
       return;
     }
 
     setIsPreviewLoading(true);
-    setVisualStatus('Loading read-only recipient preview from Airtable...');
+    setVisualStatus('Loading recipient preview...');
 
     try {
       const response = await fetch('/api/broadcasts/preview', {
@@ -201,9 +201,9 @@ export function BroadcastsShell() {
       setPreviewCounts(data.counts);
       setPreviewNotes(data.notes || []);
       setPreviewLabel(data.audience.label);
-      setVisualStatus(`Preview loaded from Airtable: ${data.counts.eligibleRecipients} eligible recipients, ${data.counts.skipped} skipped. No SMS sent.`);
+      setVisualStatus(`Preview loaded: ${data.counts.eligibleRecipients} eligible recipients, ${data.counts.skipped} skipped. No SMS sent.`);
     } catch (error) {
-      resetPreview(`Could not load Airtable preview: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      resetPreview(`Could not load recipient preview: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsPreviewLoading(false);
     }
@@ -211,22 +211,22 @@ export function BroadcastsShell() {
 
   async function searchManualPhones() {
     if (manualSearch.trim().length < 2) {
-      setVisualStatus('Type at least 2 characters or digits to search Airtable phone numbers.');
+      setVisualStatus('Type at least 2 characters or digits to search phone numbers.');
       return;
     }
 
     setIsManualSearchLoading(true);
-    setVisualStatus('Searching Airtable phone numbers for manual list preview...');
+    setVisualStatus('Searching phone numbers for manual list preview...');
 
     try {
       const response = await fetch(`/api/phones/search?q=${encodeURIComponent(manualSearch.trim())}`);
       const data = await response.json() as { phones?: PhoneSearchResult[]; details?: string; error?: string };
       if (!response.ok || data.error) throw new Error(data.details || data.error || 'Phone search failed.');
       setManualSearchResults(data.phones || []);
-      setVisualStatus(`Found ${(data.phones || []).length} Airtable phone records. Add recipients to the manual list, then preview.`);
+      setVisualStatus(`Found ${(data.phones || []).length} phone records. Add recipients to the manual list, then preview.`);
     } catch (error) {
       setManualSearchResults([]);
-      setVisualStatus(`Could not search Airtable phone numbers: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setVisualStatus(`Could not search phone numbers: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsManualSearchLoading(false);
     }
@@ -243,7 +243,7 @@ export function BroadcastsShell() {
   }
 
   function saveDraft() {
-    setVisualStatus(`Draft saved visually as "${title || autoTitle}". No SMS was sent and no Airtable record was written.`);
+    setVisualStatus(`Draft saved visually as "${title || autoTitle}". No SMS was sent.`);
   }
 
   function scheduleBroadcast() {
@@ -260,16 +260,46 @@ export function BroadcastsShell() {
     setVisualStatus(`Broadcast scheduled visually for ${scheduledDate} at ${scheduledTime}. No automatic send was triggered.`);
   }
 
-  function sendNow() {
+  async function sendNow() {
     if (!message.trim()) {
-      setVisualStatus('Write a message before visual processing.');
+      setVisualStatus('Write a message before sending.');
       return;
     }
-    if (selectedCount === 0) {
-      setVisualStatus('No recipients selected. Check at least one preview recipient before visual processing.');
+    const selectedRecipients = recipients.filter((recipient) => recipient.checked);
+    if (selectedRecipients.length === 0) {
+      setVisualStatus('No recipients selected. Check at least one preview recipient before sending.');
       return;
     }
-    setVisualStatus(`Broadcast processed visually for ${selectedCount} selected recipients. No SMS was sent from this visual workspace.`);
+
+    setVisualStatus(`Creating app campaign with ${selectedRecipients.length} recipient rows...`);
+    try {
+      const createResponse = await fetch('/api/broadcasts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: title || autoTitle,
+          message,
+          recipients: selectedRecipients.map((recipient) => ({
+            familyName: recipient.familyName,
+            personName: recipient.personName,
+            phoneE164: recipient.phoneE164,
+            body: message
+          }))
+        })
+      });
+      const createData = await createResponse.json() as { campaignId?: string; error?: string; details?: string };
+      if (!createResponse.ok || !createData.campaignId) throw new Error(createData.details || createData.error || 'Campaign creation failed.');
+
+      setVisualStatus(`Campaign saved. Sending never-attempted rows at concurrency 5...`);
+      const sendResponse = await fetch(`/api/broadcasts/${createData.campaignId}/send`, { method: 'POST' });
+      const sendData = await sendResponse.json() as { error?: string; details?: string; attempted?: number };
+      if (!sendResponse.ok || sendData.error) throw new Error(sendData.details || sendData.error || 'Broadcast send failed.');
+
+      setVisualStatus(`Broadcast send workflow attempted ${sendData.attempted || 0} never-attempted rows. Opening status/retry page...`);
+      window.location.href = `/broadcasts/${createData.campaignId}`;
+    } catch (error) {
+      setVisualStatus(`Could not send broadcast: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   return (
@@ -314,7 +344,7 @@ export function BroadcastsShell() {
         <header className="chat-head">
           <div>
             <h2 className="chat-title">New Broadcast</h2>
-            <p className="chat-subtitle">Read-only Airtable recipient preview. Live sending is handled by confirmed campaign workflows.</p>
+            <p className="chat-subtitle">Recipient preview and live send use app campaign storage.</p>
           </div>
           <div className="status-pill">Preview only</div>
         </header>
@@ -335,7 +365,7 @@ export function BroadcastsShell() {
                 <input
                   className="inbox-search-input"
                   value={audienceValue}
-                  onChange={(event) => { setAudienceValue(event.target.value); resetPreview(`${audienceLabels[audienceType]} value updated. Preview recipients to refresh Airtable data.`); }}
+                  onChange={(event) => { setAudienceValue(event.target.value); resetPreview(`${audienceLabels[audienceType]} value updated. Preview recipients to refresh contact data.`); }}
                   onKeyDown={(event) => { if (event.key === 'Enter') void previewRecipients(); }}
                   placeholder={audienceType === 'grade' ? 'Enter grade, e.g. 4' : 'Enter bus, e.g. 6'}
                 />
@@ -353,17 +383,17 @@ export function BroadcastsShell() {
                 removeManualPhone={removeManualPhone}
               />
             ) : null}
-            <p className="helper-text">Selected audience: <strong>{previewLabel === 'No Airtable preview loaded yet' ? audienceLabels[audienceType] : previewLabel}</strong></p>
+            <p className="helper-text">Selected audience: <strong>{previewLabel === 'No recipient preview loaded yet' ? audienceLabels[audienceType] : previewLabel}</strong></p>
           </section>
 
           <section className="broadcast-step-card">
             <StepTitle number="2" title="Choose SMS recipient types" />
             <div className="choice-row">
-              <label className="choice-pill"><input type="checkbox" checked={sendMother} onChange={(event) => { setSendMother(event.target.checked); resetPreview('Mother cell option updated. Preview recipients to refresh Airtable data.'); }} /> Mother cell</label>
-              <label className="choice-pill"><input type="checkbox" checked={sendFather} onChange={(event) => { setSendFather(event.target.checked); resetPreview('Father cell option updated. Preview recipients to refresh Airtable data.'); }} /> Father cell</label>
+              <label className="choice-pill"><input type="checkbox" checked={sendMother} onChange={(event) => { setSendMother(event.target.checked); resetPreview('Mother cell option updated. Preview recipients to refresh contact data.'); }} /> Mother cell</label>
+              <label className="choice-pill"><input type="checkbox" checked={sendFather} onChange={(event) => { setSendFather(event.target.checked); resetPreview('Father cell option updated. Preview recipients to refresh contact data.'); }} /> Father cell</label>
               <span className="choice-pill disabled-choice" aria-disabled="true">Home phone disabled - voice only</span>
             </div>
-            <p className="helper-text">SMS preview includes mother cell and/or father cell only, and only when Airtable marks the number SMS-safe.</p>
+            <p className="helper-text">SMS preview includes mother cell and/or father cell only when the number is SMS-safe.</p>
           </section>
 
           <section className="broadcast-step-card">
@@ -375,7 +405,7 @@ export function BroadcastsShell() {
           </section>
 
           <section className="broadcast-step-card">
-            <StepTitle number="4" title="Preview Airtable recipients" />
+            <StepTitle number="4" title="Preview recipients" />
             <button className="btn btn-primary preview-button" onClick={() => void previewRecipients()} disabled={isPreviewLoading}>
               {isPreviewLoading ? 'Loading preview...' : 'Preview recipients'}
             </button>
@@ -426,7 +456,7 @@ export function BroadcastsShell() {
                 <button className="btn btn-primary" onClick={saveSchedule}>Save Schedule</button>
               </div>
             ) : null}
-            <p className="helper-text">This workspace does not auto-send or auto-retry. Confirmed campaign sends use the live TextGrid environment gate.</p>
+            <p className="helper-text">Send Now creates an app campaign, stores recipient rows, and sends never-attempted rows through the same batched TextGrid workflow used by retry/status.</p>
           </section>
         </div>
       </section>
@@ -462,7 +492,7 @@ function ManualListSearch({
           value={manualSearch}
           onChange={(event) => setManualSearch(event.target.value)}
           onKeyDown={(event) => { if (event.key === 'Enter') searchManualPhones(); }}
-          placeholder="Search Airtable phones by name or number..."
+          placeholder="Search phones by name or number..."
         />
         <button className="mini-action-button" onClick={searchManualPhones} disabled={isManualSearchLoading}>{isManualSearchLoading ? 'Searching' : 'Search'}</button>
       </div>
@@ -505,7 +535,7 @@ function SkippedPreview({ skipped }: { skipped: SkippedRecipient[] }) {
       {skipped.slice(0, 50).map((row) => (
         <div className="skipped-preview-row" key={row.id}>
           <div>
-            <strong>{row.familyName || row.phoneE164 || 'Airtable phone record'}</strong>
+            <strong>{row.familyName || row.phoneE164 || 'phone record'}</strong>
             <p className="helper-text">{row.detail}</p>
           </div>
           <span className="tag">{reasonLabel(row.reason)}</span>
