@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCampaignAudit, updateCampaignRecipientAttempt } from '@/lib/airtable';
+import { getCampaignAudit, updateCampaignRecipientAttempt } from '@/lib/broadcasts';
 import { sendSms } from '@/lib/textgrid';
 
 const RETRY_CONCURRENCY = 5;
@@ -28,7 +28,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
         metadata: { campaignId: id, queueRecipientId: recipient.id, retryFailedOnly: 'true' }
       });
 
-      await updateCampaignRecipientAttempt(recipient.id, {
+      await updateCampaignRecipientAttempt(id, recipient.id, {
         status: result.ok ? 'Sent' : 'Failed',
         providerMessageId: result.providerMessageId,
         providerStatus: result.providerStatus,
