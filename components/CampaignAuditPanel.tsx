@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { RotateCcw, Search } from 'lucide-react';
 
-type RecipientStatus = 'sent' | 'delivered' | 'queued' | 'pending' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'other';
+type RecipientStatus = 'delivered' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'undelivered' | 'queued' | 'pending' | 'sent' | 'not_attempted' | 'other';
 
 type Recipient = {
   id: string;
@@ -29,6 +29,9 @@ type Audit = {
     failed: number;
     failedFetch: number;
     textgridHttp400Failures: number;
+    undelivered: number;
+    reachedTextgrid: number;
+    notAttempted: number;
   };
   recipients: Recipient[];
 };
@@ -40,7 +43,9 @@ const filters = [
   ['queued', 'Queued / pending'],
   ['failed', 'Failed'],
   ['failed_fetch', 'Failed fetch'],
-  ['textgrid_http_400', 'TextGrid HTTP 400']
+  ['textgrid_http_400', 'TextGrid HTTP 400'],
+  ['undelivered', 'Undelivered'],
+  ['not_attempted', 'Not attempted']
 ] as const;
 
 function maskPhone(phone: string) {
@@ -57,18 +62,30 @@ export function CampaignAuditPanel({ campaignId }: { campaignId: string }) {
   const [search, setSearch] = useState('');
   const [banner, setBanner] = useState('Loading campaign status audit...');
   const [isRetrying, setIsRetrying] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<string>('Never');
 
   async function loadAudit() {
     const response = await fetch(`/api/broadcasts/${campaignId}/audit`);
     const data = await response.json();
     if (!response.ok || data.error) throw new Error(data.details || data.error || 'Audit failed.');
     setAudit(data as Audit);
+    setLastUpdated(new Date().toLocaleTimeString());
     setBanner('Campaign audit loaded. Nothing is resent automatically.');
   }
 
   useEffect(() => {
     void loadAudit().catch((error) => setBanner(`Could not load campaign audit: ${error instanceof Error ? error.message : 'Unknown error'}`));
   }, [campaignId]);
+
+  useEffect(() => {
+    if (isRetrying) return;
+    const hasActiveRows = Boolean(audit && audit.counts.queuedPending > 0);
+    const intervalMs = hasActiveRows ? 10000 : 30000;
+    const timer = window.setTimeout(() => {
+      void loadAudit().catch((error) => setBanner(`Could not refresh campaign audit: ${error instanceof Error ? error.message : 'Unknown error'}`));
+    }, intervalMs);
+    return () => window.clearTimeout(timer);
+  }, [audit?.counts.queuedPending, campaignId, isRetrying]);
 
   const filteredRecipients = useMemo(() => {
     if (!audit) return [];
@@ -84,6 +101,7 @@ export function CampaignAuditPanel({ campaignId }: { campaignId: string }) {
 
   async function retryFailedOnly() {
     if (!audit || audit.counts.failed === 0) return;
+    if (!window.confirm(`Retry ${audit.counts.failed} failed recipients only?`)) return;
     setIsRetrying(true);
     setBanner(`Retrying ${audit.counts.failed} failed recipients only at concurrency 5. Sent, delivered, queued, and pending rows are skipped.`);
     try {
@@ -111,7 +129,8 @@ export function CampaignAuditPanel({ campaignId }: { campaignId: string }) {
         </button>
       </header>
       <div className="broadcast-scroll">
-        <div className="broadcast-status-banner">{banner}</div>
+        <div className="broadcast-status-banner">{banner} Last updated: {lastUpdated}.</div>
+        <BroadcastProgress audit={audit} />
         <div className="preview-stat-grid audit-stat-grid">
           <AuditStat label="Total recipients" value={audit?.counts.totalRecipients || 0} />
           <AuditStat label="Sent" value={audit?.counts.sent || 0} />
@@ -120,6 +139,7 @@ export function CampaignAuditPanel({ campaignId }: { campaignId: string }) {
           <AuditStat label="Failed" value={audit?.counts.failed || 0} />
           <AuditStat label="Failed fetch" value={audit?.counts.failedFetch || 0} />
           <AuditStat label="TextGrid HTTP 400" value={audit?.counts.textgridHttp400Failures || 0} />
+          <AuditStat label="Not attempted" value={audit?.counts.notAttempted || 0} />
         </div>
         <section className="broadcast-step-card">
           <div className="recipient-toolbar">
@@ -145,6 +165,26 @@ export function CampaignAuditPanel({ campaignId }: { campaignId: string }) {
           </div>
         </section>
       </div>
+    </section>
+  );
+}
+
+function BroadcastProgress({ audit }: { audit: Audit | null }) {
+  const total = audit?.counts.totalRecipients || 0;
+  const reached = audit?.counts.reachedTextgrid || 0;
+  const percent = total > 0 ? Math.round((reached / total) * 100) : 0;
+
+  return (
+    <section className="broadcast-step-card audit-progress-card">
+      <div className="thread-row">
+        <div>
+          <p className="card-title">Broadcast progress</p>
+          <p className="helper-text">{reached} of {total} have reached TextGrid</p>
+        </div>
+        <strong>{percent}%</strong>
+      </div>
+      <div className="audit-progress-track"><div className="audit-progress-fill" style={{ width: `${percent}%` }} /></div>
+      <p className="helper-text">{audit?.counts.delivered || 0} delivered · {audit?.counts.queuedPending || 0} queued/pending · {audit?.counts.failed || 0} failed · {audit?.counts.notAttempted || 0} not attempted</p>
     </section>
   );
 }

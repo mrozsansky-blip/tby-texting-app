@@ -55,7 +55,7 @@ type PhoneSearchResult = {
 
 const broadcastRows = [
   { title: 'Grade 4 Forms Reminder', status: 'Draft', tab: 'Drafts', audience: 'Grade 4 families', count: 143, time: 'Created today' },
-  { title: 'Bus 6 Delay Notice', status: 'Scheduled - provider not connected', tab: 'Scheduled', audience: 'Bus 6', count: 42, time: 'Tomorrow 8:30 AM' },
+  { title: 'Bus 6 Delay Notice', status: 'Scheduled - pending send window', tab: 'Scheduled', audience: 'Bus 6', count: 42, time: 'Tomorrow 8:30 AM' },
   { title: 'All Families Notice', status: 'Processed - not sent', tab: 'Past', audience: 'All Families', count: 684, time: 'Yesterday' }
 ];
 
@@ -248,7 +248,7 @@ export function BroadcastsShell() {
 
   function scheduleBroadcast() {
     setShowSchedulePanel(true);
-    setVisualStatus('Choose a date and time, then save the visual schedule. Provider remains disconnected.');
+    setVisualStatus('Choose a date and time, then save the visual schedule. This visual workspace does not send automatically.');
   }
 
   function saveSchedule() {
@@ -257,7 +257,7 @@ export function BroadcastsShell() {
       return;
     }
     setShowSchedulePanel(false);
-    setVisualStatus(`Broadcast scheduled visually for ${scheduledDate} at ${scheduledTime}. Status: not sent - provider not connected.`);
+    setVisualStatus(`Broadcast scheduled visually for ${scheduledDate} at ${scheduledTime}. No automatic send was triggered.`);
   }
 
   function sendNow() {
@@ -269,7 +269,7 @@ export function BroadcastsShell() {
       setVisualStatus('No recipients selected. Check at least one preview recipient before visual processing.');
       return;
     }
-    setVisualStatus(`Broadcast processed visually for ${selectedCount} selected recipients. Status: not sent - provider not connected.`);
+    setVisualStatus(`Broadcast processed visually for ${selectedCount} selected recipients. No SMS was sent from this visual workspace.`);
   }
 
   return (
@@ -314,9 +314,9 @@ export function BroadcastsShell() {
         <header className="chat-head">
           <div>
             <h2 className="chat-title">New Broadcast</h2>
-            <p className="chat-subtitle">Read-only Airtable recipient preview. TextGrid is not connected.</p>
+            <p className="chat-subtitle">Read-only Airtable recipient preview. Live sending is handled by confirmed campaign workflows.</p>
           </div>
-          <div className="status-pill">Provider not connected</div>
+          <div className="status-pill">Preview only</div>
         </header>
 
         <div className="broadcast-scroll">
@@ -426,7 +426,7 @@ export function BroadcastsShell() {
                 <button className="btn btn-primary" onClick={saveSchedule}>Save Schedule</button>
               </div>
             ) : null}
-            <p className="helper-text">TextGrid is not connected. Send Now visually processes only and reports: not sent - provider not connected.</p>
+            <p className="helper-text">This workspace does not auto-send or auto-retry. Confirmed campaign sends use the live TextGrid environment gate.</p>
           </section>
         </div>
       </section>

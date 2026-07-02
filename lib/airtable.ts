@@ -832,7 +832,7 @@ export async function logInboundMessage(input: { from: string; body: string; pro
   return record.id;
 }
 
-export type CampaignRecipientStatus = 'sent' | 'delivered' | 'queued' | 'pending' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'other';
+export type CampaignRecipientStatus = 'delivered' | 'failed' | 'failed_fetch' | 'textgrid_http_400' | 'undelivered' | 'queued' | 'pending' | 'sent' | 'not_attempted' | 'other';
 
 export type CampaignQueueRecipient = {
   id: string;
@@ -858,6 +858,9 @@ export type CampaignAudit = {
     failed: number;
     failedFetch: number;
     textgridHttp400Failures: number;
+    undelivered: number;
+    reachedTextgrid: number;
+    notAttempted: number;
   };
   recipients: CampaignQueueRecipient[];
 };
@@ -879,13 +882,21 @@ function fieldText(record: AirtableRecord, names: string[]) {
 }
 
 function normalizeCampaignRecipientStatus(status: string, errorMessage = '', providerStatus = ''): CampaignRecipientStatus {
-  const text = normalizeGroupText(`${status} ${errorMessage} ${providerStatus}`);
-  if (/delivered/.test(text)) return 'delivered';
-  if (/\bsent\b/.test(text)) return 'sent';
-  if (/failed fetch/.test(text)) return 'failed_fetch';
-  if (/http\s*400|\b400\b|bad request/.test(text)) return 'textgrid_http_400';
-  if (/fail|error/.test(text)) return 'failed';
-  if (/queue|pending|preview|draft|sending/.test(text)) return 'queued';
+  const providerText = normalizeGroupText(providerStatus);
+  const appText = normalizeGroupText(status);
+  const errorText = normalizeGroupText(errorMessage);
+  const combinedErrorText = normalizeGroupText(`${providerStatus} ${errorMessage}`);
+
+  if (providerText === 'delivered' || /\bdelivered\b/.test(providerText)) return 'delivered';
+  if (/failed fetch/.test(combinedErrorText)) return 'failed_fetch';
+  if (/http\s*400|\b400\b|bad request/.test(combinedErrorText)) return 'textgrid_http_400';
+  if (/\bundelivered\b/.test(providerText)) return 'undelivered';
+  if (/\b(failed|failure|error)\b/.test(providerText) || /\b(failed|failure|error)\b/.test(errorText)) return 'failed';
+  if (/\b(queue|queued|pending|sending)\b/.test(providerText)) return providerText.includes('pending') ? 'pending' : 'queued';
+  if (/\bsent\b|reached textgrid|reached provider/.test(providerText)) return 'sent';
+  if (/\bsent\b/.test(appText)) return 'sent';
+  if (!appText || /\b(draft|preview|not attempted|new)\b/.test(appText)) return 'not_attempted';
+  if (/\b(queue|queued|pending|sending)\b/.test(appText)) return appText.includes('pending') ? 'pending' : 'queued';
   return 'other';
 }
 
@@ -918,15 +929,19 @@ export async function getCampaignAudit(campaignId: string): Promise<CampaignAudi
     .map((record) => queueRecipientFromRecord(record, campaignBody));
 
   const counts = recipients.reduce<CampaignAudit['counts']>((acc, recipient) => {
+    const reachedTextgrid = Boolean(recipient.providerStatus || recipient.providerMessageId) || recipient.normalizedStatus === 'sent';
     acc.totalRecipients += 1;
     if (recipient.normalizedStatus === 'sent') acc.sent += 1;
     if (recipient.normalizedStatus === 'delivered') acc.delivered += 1;
-    if (recipient.normalizedStatus === 'queued') acc.queuedPending += 1;
-    if (recipient.normalizedStatus === 'failed' || recipient.normalizedStatus === 'failed_fetch' || recipient.normalizedStatus === 'textgrid_http_400') acc.failed += 1;
+    if (recipient.normalizedStatus === 'queued' || recipient.normalizedStatus === 'pending') acc.queuedPending += 1;
+    if (recipient.normalizedStatus === 'failed' || recipient.normalizedStatus === 'failed_fetch' || recipient.normalizedStatus === 'textgrid_http_400' || recipient.normalizedStatus === 'undelivered') acc.failed += 1;
     if (recipient.normalizedStatus === 'failed_fetch') acc.failedFetch += 1;
     if (recipient.normalizedStatus === 'textgrid_http_400') acc.textgridHttp400Failures += 1;
+    if (recipient.normalizedStatus === 'undelivered') acc.undelivered += 1;
+    if (reachedTextgrid) acc.reachedTextgrid += 1;
+    if (recipient.normalizedStatus === 'not_attempted' || (!reachedTextgrid && recipient.normalizedStatus === 'other')) acc.notAttempted += 1;
     return acc;
-  }, { totalRecipients: 0, sent: 0, delivered: 0, queuedPending: 0, failed: 0, failedFetch: 0, textgridHttp400Failures: 0 });
+  }, { totalRecipients: 0, sent: 0, delivered: 0, queuedPending: 0, failed: 0, failedFetch: 0, textgridHttp400Failures: 0, undelivered: 0, reachedTextgrid: 0, notAttempted: 0 });
 
   return {
     campaign: {
