@@ -50,6 +50,8 @@ export type CampaignAudit = {
   recipients: BroadcastRecipient[];
 };
 
+export const BROADCAST_STORAGE_NOT_CONFIGURED_MESSAGE = 'Broadcast status storage is not configured. Please set up KV/Upstash before sending live broadcasts.';
+
 type RedisResult<T> = { result?: T; error?: string };
 type PipelineResult<T> = Array<{ result?: T; error?: string }>;
 
@@ -63,7 +65,7 @@ function kvConfig() {
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) {
-    throw new Error('Persistent broadcast storage is not configured. Set KV_REST_API_URL and KV_REST_API_TOKEN (or Upstash Redis REST equivalents).');
+    throw new Error(BROADCAST_STORAGE_NOT_CONFIGURED_MESSAGE);
   }
   return { url: url.replace(/\/$/, ''), token };
 }

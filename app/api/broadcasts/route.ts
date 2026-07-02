@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createBroadcastCampaign } from '@/lib/broadcasts';
+import { BROADCAST_STORAGE_NOT_CONFIGURED_MESSAGE, createBroadcastCampaign } from '@/lib/broadcasts';
 
 export async function POST(request: Request) {
   try {
@@ -27,6 +27,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ campaignId: campaign.id, campaign });
   } catch (error) {
-    return NextResponse.json({ error: 'Could not create broadcast campaign.', details: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    if (message === BROADCAST_STORAGE_NOT_CONFIGURED_MESSAGE) {
+      return NextResponse.json({ error: BROADCAST_STORAGE_NOT_CONFIGURED_MESSAGE }, { status: 503 });
+    }
+    return NextResponse.json({ error: 'Could not create broadcast campaign.', details: message }, { status: 500 });
   }
 }
